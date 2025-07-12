@@ -6,7 +6,10 @@ setup(
     packages=find_packages(),
     entry_points={
         'aiida.calculations': [
-            'constrained_pw = aiida_custom_pw.custom_pw:CustomPwCalculation',
+            'constrained_pw = lordcapulet.constrained_pw:CustomPwCalculation',
+        ],
+        'aiida.workflows': [
+            'lordcapulet.afm_scan = lordcapulet_workflows.simple_afm_scan:AFMScanWorkChain',
         ],
     },
     install_requires=['aiida-core', 'aiida-quantumespresso'],
