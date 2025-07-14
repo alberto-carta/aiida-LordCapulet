@@ -48,14 +48,15 @@ class AFMScanWorkChain(WorkChain):
             builder.structure = self.inputs.structure
             builder.parameters = self.inputs.parameters.clone()
             builder.kpoints = self.inputs.kpoints
-            
+
+            # this is hardcoded for now, needs to be improved 
             pseudo_family = load_group('SSSP/1.3/PBEsol/efficiency')
             pseudos = pseudo_family.get_pseudos(structure=builder.structure)
             # builder.pseudos = self.inputs.pseudos 
             builder.pseudos = pseudos
 
             builder.parameters['SYSTEM']['starting_magnetization'] = starting_magnetization
-            builder.metadata.options = {'resources': {'num_machines': 1}, 'withmpi': True}
+            # builder.metadata.options = {'resources': {'num_machines': 1}, 'withmpi': True}
             # <<< CORRECT KEY FOR OCCUPATION MATRICES >>>
             builder.settings = Dict(dict={'parser_options': {'parse_atomic_occupations': True}})
             # self.ctx.calc_futures.append(self.submit(builder))
