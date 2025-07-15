@@ -5,7 +5,7 @@ import numpy as np
 from aiida_quantumespresso.data.hubbard_structure import HubbardStructureData
 
 # Import the custom constrained calculation
-from lordcapulet_custom_pw.custom_pw import ConstrainedPWCalculation
+from lordcapulet.calculations.constrained_pw import ConstrainedPWCalculation
 
 class ConstrainedScanWorkChain(WorkChain):
     """
