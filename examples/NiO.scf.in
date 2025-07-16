@@ -1,0 +1,52 @@
+&control
+  prefix = 'Ni2O2_id_820'
+  verbosity = 'high'
+  calculation = 'scf'
+  outdir = './outputs'
+  pseudo_dir = '.'
+/
+
+&system
+  ibrav = 0
+  nat = 4
+  ntyp = 3
+  ecutwfc = 60.0
+  starting_magnetization(1) = 0.5
+  starting_magnetization(2) = -0.5
+  occupations = 'smearing'
+  nspin = 2
+  smearing = 'gaussian'
+  degauss = 0.01
+  ecutrho = 480.0
+/
+
+&electrons
+  mixing_beta = 0.3
+  electron_maxstep = 500
+  conv_thr = 1.0e-8
+  mixing_mode = 'local-TF'
+/
+
+ATOMIC_SPECIES
+Ni 58.6934 Ni.UPF
+Ni1 58.6934 Ni.UPF
+O 15.9994 O.UPF
+
+CELL_PARAMETERS (angstrom)
+4.177001691472421	2.0885008457362106	2.0885008457362106
+2.0885008457362106	4.177001691472421	2.0885008457362106
+2.0885008457362106	2.0885008457362106	4.177001691472421
+
+ATOMIC_POSITIONS (crystal) 
+Ni 0.0 0.0 0.0
+Ni1 0.5 0.5 0.5
+O 0.25 0.25 0.25
+O 0.75 0.75 0.75
+
+K_POINTS (automatic)
+8 8 8 0 0 0
+
+HUBBARD (ortho-atomic)
+U Ni-3d 5.0
+U Ni1-3d 5.0
+U O-2p 0.0
