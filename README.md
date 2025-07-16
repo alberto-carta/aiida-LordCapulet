@@ -1,7 +1,20 @@
 # LordCapulet
 
+**LordCapulet** is an AiiDA plugin that provides automated workflows for constrained DFT+U calculations using OSCDFT (Occupation-Site Constrained DFT). The main feature is the **GlobalConstrainedSearchWorkChain**, which performs intelligent, iterative searches through occupation matrix space to find optimal electronic configurations.
 
-Provides AiiDA calculation and workflow plugins for running constrained DFT+U calculations, including:
+## Key Features
+
+### GlobalConstrainedSearchWorkChain
+The flagship workflow that orchestrates an automated search process:
+
+1. **Initial AFM Search**: Performs antiferromagnetic calculations to generate initial occupation matrices
+2. **Iterative Constrained Search**: Intelligently proposes new occupation matrices based on previous results
+3. **Batch Processing**: Runs N proposals per generation until Nmax total calculations are completed
+4. **Adaptive Sampling**: Uses both Markovian (generation-to-generation) and holistic (all-history) proposal modes
+
+This workflow enables systematic exploration of electronic ground states in strongly correlated materials, automatically discovering multiple metastable states and their energetic ordering.
+
+### Additional Workflows and Calculations
 
 - **ConstrainedPWCalculation**: A custom PW calculation that handles OSCDFT constraints
 - **AFMScanWorkChain**: Workflow for scanning different antiferromagnetic configurations
@@ -27,6 +40,7 @@ lorcapulet/                          # Main package directory
 └── workflows/                       # AiiDA workflow plugins
     ├── afm_scan.py                 # Antiferromagnetic configuration scanner
     ├── constrained_scan.py         # Multiple constrained calculations workflow
+    ├── global_constrained_search.py # Global automated search workflow (main feature)
     └── __init__.py                 # Module initialization
 ```
 
@@ -53,6 +67,7 @@ lorcapulet
 └── workflows
     ├── afm_scan.py
     ├── constrained_scan.py
+    ├── global_constrained_search.py
     └── __init__.py
 
 ```
@@ -61,10 +76,10 @@ lorcapulet
 
 ### Direct Import
 ```python
-from lordcapulet import ConstrainedPWCalculation, AFMScanWorkChain, ConstrainedScanWorkChain
+from lordcapulet import ConstrainedPWCalculation, AFMScanWorkChain, ConstrainedScanWorkChain, GlobalConstrainedSearchWorkChain
 
 # Or specific module imports
-from lordcapulet.workflows import AFMScanWorkChain, ConstrainedScanWorkChain
+from lordcapulet.workflows import AFMScanWorkChain, ConstrainedScanWorkChain, GlobalConstrainedSearchWorkChain
 from lordcapulet.calculations import ConstrainedPWCalculation
 from lordcapulet.functions import aiida_propose_occ_matrices_from_results
 ```
@@ -75,25 +90,36 @@ from aiida.plugins import WorkflowFactory, CalculationFactory
 
 AFMScanWorkChain = WorkflowFactory('lordcapulet.afm_scan')
 ConstrainedScanWorkChain = WorkflowFactory('lordcapulet.constrained_scan')
+GlobalConstrainedSearchWorkChain = WorkflowFactory('lordcapulet.global_constrained_search')
 ConstrainedPWCalculation = CalculationFactory('lordcapulet.constrained_pw')
 ```
 
-### Running a Constrained Scan
+### Running a Global Constrained Search
 ```python
 from aiida.engine import submit
-from lordcapulet.workflows import ConstrainedScanWorkChain
+from lordcapulet.workflows import GlobalConstrainedSearchWorkChain
 
 inputs = {
-    'structure': your_structure,
-    'parameters': pw_parameters,
-    'kpoints': kpoints,
-    'code': code,
-    'tm_atoms': List(list=tm_atoms),
-    'oscdft_card': oscdft_parameters,
-    'occupation_matrices_list': List(list=target_matrices),
+    'afm': {
+        'structure': your_structure,
+        'parameters': pw_parameters,
+        'kpoints': kpoints,
+        'code': code,
+        'tm_atoms': List(list=tm_atoms),
+    },
+    'constrained': {
+        'structure': your_structure,
+        'parameters': pw_parameters,
+        'kpoints': kpoints,
+        'code': code,
+        'tm_atoms': List(list=tm_atoms),
+        'oscdft_card': oscdft_parameters,
+    },
+    'Nmax': Int(100),  # Total number of proposals to evaluate
+    'N': Int(10),      # Number of proposals per generation
 }
 
-workchain = submit(ConstrainedScanWorkChain, **inputs)
+workchain = submit(GlobalConstrainedSearchWorkChain, **inputs)
 ```
 
 ## Verification
