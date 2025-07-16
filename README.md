@@ -1,6 +1,15 @@
 # LordCapulet
 
 
+```Provides AiiDA calculation and workflow plugins for running constrained DFT+U calculations, including:
+
+- **ConstrainedPWCalculation**: A custom PW calculation that handles OSCDFT constraints
+- **AFMScanWorkChain**: Workflow for scanning different antiferromagnetic configurations
+- **ConstrainedScanWorkChain**: Workflow for running multiple constrained calculations with different target occupation matrices
+
+![LordCapulet](LordCapulet.png)
+
+
 
 #### Package Structure
 
@@ -20,11 +29,6 @@ lorcapulet/                          # Main package directory
     ├── constrained_scan.py         # Multiple constrained calculations workflow
     └── __init__.py                 # Module initialization
 
-```Provides AiiDA calculation and workflow plugins for running constrained DFT+U calculations, including:
-
-- **ConstrainedPWCalculation**: A custom PW calculation that handles OSCDFT constraints
-- **AFMScanWorkChain**: Workflow for scanning different antiferromagnetic configurations
-- **ConstrainedScanWorkChain**: Workflow for running multiple constrained calculations with different target occupation matrices
 
 ## Installation
 
