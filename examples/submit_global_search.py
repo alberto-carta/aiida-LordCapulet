@@ -112,7 +112,7 @@ oscdft_card = Dict(dict={
 })
 
 # Global search parameters
-Nmax = 40   # Total number of constrained calculations to perform (6 trials)
+Nmax = 61   # Total number of constrained calculations to perform (6 trials)
 N = 20      # Number of proposals per generation
 
 json_readfile = '/home/carta_a/Documents/Local_calculations/aiida-LordCapulet/examples/NiO_mixing_lTF_beta0.3_oscdft_data.json'
