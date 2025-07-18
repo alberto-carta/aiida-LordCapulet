@@ -8,6 +8,8 @@ from aiida.engine import WorkChain, run
 from aiida.orm import Dict, List, Int, Float, Str
 from aiida.engine import calcfunction
 
+from .proposal_modes import propose_random_constraints
+
 @calcfunction
 def aiida_propose_occ_matrices_from_results(pk_list: List, N: int = 8, debug: bool = False,
                                              mode: str = 'random', **kwargs):
@@ -26,6 +28,12 @@ def aiida_propose_occ_matrices_from_results(pk_list: List, N: int = 8, debug: bo
     :param kwargs: Additional keyword arguments for `propose_new_constraints`.
 
     :return: List of Dict nodes containing the occupation matrices.
+
+    !!! WARNING PRINT STATEMENTS !!!
+
+    This function uses print statements to log debug information.
+    This is because it is a calcfunction wrapping AiiDA agnostic code.
+    The print statements will be captured in the AiiDA report log.
     """
 
     # load the nodes from the PKs
@@ -83,14 +91,14 @@ def aiida_propose_occ_matrices_from_results(pk_list: List, N: int = 8, debug: bo
 
 
 # define a function that takes a list of dictionaries and N and returns a list of N dictionaries
-def propose_new_constraints(occ_matr_list, N, mode='random', debug=False, **kwargs):
+def propose_new_constraints(occ_matr_list, N, mode='random', debug=True, **kwargs):
     """
     !!IMPORTANT!! THIS FUNCTION SHOULD NOT GET ANY AIIDA TYPES AS INPUT
     
     Returns a list of N dictionaries from a list of dictionaries.
     
     This will be a giant function with a lot of logic
-    and it is better that eveveything non trivial gets its own function and wrapped here
+    and it is better that everything non trivial gets its own function and wrapped here
 
     
     :param occ_matr_list: List of dictionaries to choose from.
@@ -121,7 +129,7 @@ def propose_new_constraints(occ_matr_list, N, mode='random', debug=False, **kwar
     match mode:
 
         case 'random':
-            raise ValueError("Random mode is not implemented yet")
+            proposals = propose_random_constraints(occ_matr_list, natoms,  N, debug=debug, **kwargs)
 
         case 'read':
             # check if there is readfile in kwargs

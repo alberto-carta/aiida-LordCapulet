@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+#%%
 """
 Simple test runner for LordCapulet utilities.
 
@@ -20,9 +21,10 @@ def run_rotation_matrix_tests():
     
     try:
         # Import and run the test class
-        from tests.utils.test_rotation_matrices import TestSphericalToCubicRotation
+        from tests.utils.test_rotation_matrices import TestSphericalToCubicRotation, TestAngularMomentumOperators
         
         test_suite = TestSphericalToCubicRotation()
+        angular_test_suite = TestAngularMomentumOperators()
         
         print("\n🧪 Testing function existence...")
         test_suite.test_function_exists()
@@ -49,8 +51,28 @@ def run_rotation_matrix_tests():
         test_suite.test_matrix_hermiticity_preservation()
         print("   ✅ PASSED")
         
+        print("\n🧪 Testing angular momentum function existence...")
+        angular_test_suite.test_function_exists()
+        print("   ✅ PASSED")
+        
+        print("\n🧪 Testing invalid l values...")
+        angular_test_suite.test_invalid_l_values()
+        print("   ✅ PASSED")
+        
+        print("\n🧪 Testing l=1/2 operators...")
+        angular_test_suite.test_angular_momentum_l_half()
+        print("   ✅ PASSED")
+        
+        print("\n🧪 Testing l=1 operators...")
+        angular_test_suite.test_angular_momentum_l_one()
+        print("   ✅ PASSED")
+        
+        print("\n🧪 Testing l=2 operators...")
+        angular_test_suite.test_angular_momentum_l_two()
+        print("   ✅ PASSED")
+        
         print("\n" + "=" * 60)
-        print("🎉 All rotation matrix tests PASSED! 🎉")
+        print("🎉 All rotation matrix and angular momentum tests PASSED! 🎉")
         print("=" * 60)
         
         return True
@@ -81,3 +103,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+# %%

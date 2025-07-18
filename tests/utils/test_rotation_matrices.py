@@ -24,7 +24,7 @@ except ImportError:
                     return isinstance(exc_val, exception_type)
             return ContextManager()
 
-from lordcapulet.utils.rotation_matrices import spherical_to_cubic_rotation
+from lordcapulet.utils.rotation_matrices import spherical_to_cubic_rotation, get_angular_momentum_operators
 
 
 class TestSphericalToCubicRotation:
@@ -130,9 +130,98 @@ class TestSphericalToCubicRotation:
         np.testing.assert_allclose(rho_cubic, rho_cubic.T.conj(), atol=1e-10)
 
 
+class TestAngularMomentumOperators:
+    """Test suite for angular momentum operators."""
+
+    def test_function_exists(self):
+        """Test that the angular momentum function can be imported and called."""
+        Lx, Ly, Lz, Lp, Lm = get_angular_momentum_operators(1)
+        assert Lx is not None
+        assert Ly is not None
+        assert Lz is not None
+        assert Lp is not None
+        assert Lm is not None
+        
+        # Check dimensions for l=1 (3x3 matrices)
+        assert Lx.shape == (3, 3)
+        assert Ly.shape == (3, 3)
+        assert Lz.shape == (3, 3)
+        assert Lp.shape == (3, 3)
+        assert Lm.shape == (3, 3)
+
+    def test_invalid_l_values(self):
+        """Test that invalid l values raise ValueError."""
+        with pytest.raises(ValueError, match="l must be a non-negative integer"):
+            get_angular_momentum_operators(-1)
+        
+        with pytest.raises(ValueError, match="l must be a non-negative integer"):
+            get_angular_momentum_operators(0.3)  # Not integer or half-integer
+
+    def commutator(self, A, B):
+        """Helper function to compute commutator [A, B] = AB - BA."""
+        return A @ B - B @ A
+
+    def test_angular_momentum_l_half(self):
+        """Test angular momentum operators for l=1/2."""
+        Lx, Ly, Lz, Lp, Lm = get_angular_momentum_operators(0.5)
+        
+        # Check dimensions
+        assert Lx.shape == (2, 2)
+        assert Ly.shape == (2, 2)
+        assert Lz.shape == (2, 2)
+        
+        # Check commutation relation [Lx, Ly] = i*Lz
+        np.testing.assert_allclose(
+            self.commutator(Lx, Ly), 1j * Lz, atol=1e-10
+        )
+
+    def test_angular_momentum_l_one(self):
+        """Test angular momentum operators for l=1."""
+        Lx, Ly, Lz, Lp, Lm = get_angular_momentum_operators(1)
+        
+        # Check dimensions
+        assert Lx.shape == (3, 3)
+        assert Ly.shape == (3, 3)
+        assert Lz.shape == (3, 3)
+        
+        # Check Lz is diagonal with eigenvalues [-1, 0, 1]
+        expected_Lz = np.array([[-1, 0, 0], [0, 0, 0], [0, 0, 1]])
+        np.testing.assert_allclose(Lz, expected_Lz, atol=1e-10)
+        
+        # Check commutation relation [Lx, Ly] = i*Lz
+        np.testing.assert_allclose(
+            self.commutator(Lx, Ly), 1j * Lz, atol=1e-10
+        )
+
+    def test_angular_momentum_l_two(self):
+        """Test angular momentum operators for l=2."""
+        Lx, Ly, Lz, Lp, Lm = get_angular_momentum_operators(2)
+        
+        # Check dimensions
+        assert Lx.shape == (5, 5)
+        assert Ly.shape == (5, 5)
+        assert Lz.shape == (5, 5)
+        
+        # Check Lz is diagonal with eigenvalues [-2, -1, 0, 1, 2]
+        expected_Lz = np.array([
+            [-2, 0, 0, 0, 0],
+            [0, -1, 0, 0, 0],
+            [0, 0, 0, 0, 0],
+            [0, 0, 0, 1, 0],
+            [0, 0, 0, 0, 2]
+        ])
+        np.testing.assert_allclose(Lz, expected_Lz, atol=1e-10)
+        
+        # Check commutation relation [Lx, Ly] = i*Lz
+        np.testing.assert_allclose(
+            self.commutator(Lx, Ly), 1j * Lz, atol=1e-10
+        )
+
+
 if __name__ == "__main__":
     # Run basic tests when executed directly
     test_suite = TestSphericalToCubicRotation()
+    angular_test_suite = TestAngularMomentumOperators()
     
     print("Running rotation matrix tests...")
     
@@ -154,5 +243,22 @@ if __name__ == "__main__":
     
     print("✓ Testing Hermiticity preservation...")
     test_suite.test_matrix_hermiticity_preservation()
+    
+    print("\nRunning angular momentum operator tests...")
+    
+    print("✓ Testing angular momentum function existence...")
+    angular_test_suite.test_function_exists()
+    
+    print("✓ Testing invalid l values...")
+    angular_test_suite.test_invalid_l_values()
+    
+    print("✓ Testing l=1/2 operators...")
+    angular_test_suite.test_angular_momentum_l_half()
+    
+    print("✓ Testing l=1 operators...")
+    angular_test_suite.test_angular_momentum_l_one()
+    
+    print("✓ Testing l=2 operators...")
+    angular_test_suite.test_angular_momentum_l_two()
     
     print("\nAll tests passed! ✅")
