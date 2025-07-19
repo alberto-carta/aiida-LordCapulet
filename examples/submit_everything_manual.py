@@ -10,8 +10,6 @@ from ase.io import read
 from aiida.orm import List
 #%%
 
-aiida.load_profile()
-
 atoms = read('NiO.scf.in', format='espresso-in')
 # atoms = read('nbcl.relax.in', format='espresso-in')
 
