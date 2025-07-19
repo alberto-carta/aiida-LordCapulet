@@ -1,19 +1,26 @@
 
 import numpy as np
 import json
+import contextlib
+import io
 from aiida.orm import Dict, Code, KpointsData, load_node
 from aiida.engine import WorkChain, run
-
-
 from aiida.orm import Dict, List, Int, Float, Str
 from aiida.engine import calcfunction
 
 from .proposal_modes import propose_random_constraints
 
-@calcfunction
-def aiida_propose_occ_matrices_from_results(pk_list: List, N: int = 8, debug: bool = False,
-                                             mode: str = 'random', **kwargs):
 
+def redirect_print_report(func, *args, **kwargs):
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        result = func(*args, **kwargs)
+    output = buf.getvalue()
+    return result, output
+
+@calcfunction
+def aiida_propose_occ_matrices_from_results(
+    pk_list, N=8, debug=False, mode='random', *, self=None, **kwargs):
     """
     AiiDA calcfunction that takes a list of PKs
     and returns a list of PKs of Dict nodes that are themselves stored
@@ -65,17 +72,22 @@ def aiida_propose_occ_matrices_from_results(pk_list: List, N: int = 8, debug: bo
             raise ValueError(f"Unsupported AiiDA node type for key '{key}': {type(value)}. "
                            f"Only Dict, List, Int, Float, and Str nodes are supported.")
     # check if this ran in the debug mode
-    if debug:
-        print(f"Loaded {len(occ_matrices)} occupation matrices from nodes with PKs: {pk_list.get_list()}")
-        print(f"Using proposal mode: {mode.value} with N = {N.value} samples per generation")
+    if debug and self is not None:
+        self.report(f"Loaded {len(occ_matrices)} occupation matrices from nodes with PKs: {pk_list.get_list()}")
+        self.report(f"Using proposal mode: {mode.value} with N = {N.value} samples per generation")
 
     # magic happens here
-    proposals = propose_new_constraints(occ_matrices,
-                                    N= N.value,
+    proposals, to_report = redirect_print_report(
+                                    propose_new_constraints,
+                                    occ_matr_list =occ_matrices,
+                                    N=N.value,
                                     debug=debug.value,
                                     mode=mode.value,
                                     **kwargs_internal
                                     )
+
+    if self is not None:
+        self.report(to_report)
 
     # create Dict nodes for each proposal
     dict_nodes = []

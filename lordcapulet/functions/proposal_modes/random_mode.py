@@ -79,7 +79,8 @@ def propose_random_constraints(occ_matr_list, natoms, N, debug=False, randomize_
             # STEP 2c: Apply random rotation to break symmetry
             target_matrix_np = _apply_random_rotation(target_matrix_np)
             
-            occ_mat_list_per_atom.append(target_matrix_np.tolist())
+            # for collinear calculations, matrices should be real, we enforce this
+            occ_mat_list_per_atom.append(target_matrix_np.real.tolist())
 
         # Create proposal dictionary
         proposal = {'matrix': occ_mat_list_per_atom}
@@ -189,10 +190,10 @@ def _apply_random_rotation(matrices):
 
 # # np.trace(occ_matrices[0]['1']['spin_data']['up']['occupation_matrix'])
 
-# a = propose_random_constraints(occ_matrices, natoms=2, N=6, debug=True, target_traces=[5, 5], randomize_oxidation=False)
+# a = propose_random_constraints(occ_matrices, natoms=2, N=10, debug=True, target_traces=[5, 5], randomize_oxidation=False)
 
 # with np.printoptions(precision=3, suppress=True):
 #    print(np.array(a[3]['matrix'][0][0]).real)
-   # take sum of eigenvalues
+# #    take sum of eigenvalues
 #    print(np.sum(np.linalg.eigvals(np.array(a[3]['matrix'][0]).real)) + np.sum(np.array(a[3]['matrix'][0]).real))
-# %%
+# # %%

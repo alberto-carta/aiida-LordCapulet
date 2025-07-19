@@ -56,7 +56,10 @@ class AFMScanWorkChain(WorkChain):
             builder.pseudos = pseudos
 
             builder.parameters['SYSTEM']['starting_magnetization'] = starting_magnetization
-            # builder.metadata.options = {'resources': {'num_machines': 1}, 'withmpi': True}
+            
+            # Set default metadata for calculations
+            builder.metadata = {'options': {'resources': {'num_machines': 1}, 'withmpi': True}}
+            
             # <<< CORRECT KEY FOR OCCUPATION MATRICES >>>
             builder.settings = Dict(dict={'parser_options': {'parse_atomic_occupations': True}})
             # self.ctx.calc_futures.append(self.submit(builder))
@@ -72,10 +75,15 @@ class AFMScanWorkChain(WorkChain):
     #             uuid = 'no matrix'
     #         matrices.append(uuid)
     #     self.out('all_occupation_matrices', List(list=matrices).store())
+
+
+    # here one needs to also check if the calculation
+    # ends with any exit code other than 0
+    # if so, we should not store the occupation matrix
     def gather_results(self):
         matrices = []
         for calc in self.ctx.calcs:
-            if 'output_atomic_occupations' in calc.outputs:
+            if 'output_atomic_occupations' in calc.outputs and calc.exit_status == 0:
                 pk = calc.outputs.output_atomic_occupations.pk
             else:
                 pk = -1  # Or any sentinel value you prefer for "no matrix"

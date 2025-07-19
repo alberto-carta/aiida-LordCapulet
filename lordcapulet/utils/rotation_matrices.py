@@ -195,41 +195,41 @@ def rotate_QE_matrix(rho_qe, angle, axis):
 #     print(rho_rotated.real)
 
 # %%
-# get a random rotation matrix for d orbitals
-from scipy.stats import uniform as uniform_direction
-random_direction = uniform_direction.rvs(size=3)
-random_angle = np.random.uniform(0, 2 * np.pi)
+# # get a random rotation matrix for d orbitals
+# from scipy.stats import uniform as uniform_direction
+# random_direction = uniform_direction.rvs(size=3)
+# random_angle = np.random.uniform(0, 2 * np.pi)
 
-Lx, Ly, Lz, _, _ = get_angular_momentum_operators(2)
+# Lx, Ly, Lz, _, _ = get_angular_momentum_operators(2)
 
-rot_mat = get_rotation_matrix(random_angle, random_direction, Lx, Ly, Lz)
+# rot_mat = get_rotation_matrix(random_angle, random_direction, Lx, Ly, Lz)
 
-with np.printoptions(precision=3, suppress=True):
-    print("Random Rotation Matrix for d-orbitals:")
-    print(rot_mat)
+# with np.printoptions(precision=3, suppress=True):
+#     print("Random Rotation Matrix for d-orbitals:")
+#     print(rot_mat)
 
 
-C = spherical_to_cubic_rotation(dim=5, convention='qe')
-# C = get_spherical_to_cubic_d_orbital_transformation_matrix()
-rot_mat_qe = C @ rot_mat @ C.T.conj()
+# C = spherical_to_cubic_rotation(dim=5, convention='qe')
+# # C = get_spherical_to_cubic_d_orbital_transformation_matrix()
+# rot_mat_qe = C @ rot_mat @ C.T.conj()
 
-with np.printoptions(precision=3, suppress=True):
-    print("Quantum ESPRESSO Rotation Matrix:")
-    print(rot_mat_qe)
+# with np.printoptions(precision=3, suppress=True):
+#     print("Quantum ESPRESSO Rotation Matrix:")
+#     print(rot_mat_qe)
 
-# now change it to a Quantum ESPRESSO rotation matrix
-# consider a density matrix with just a 1
+# # now change it to a Quantum ESPRESSO rotation matrix
+# # consider a density matrix with just a 1
 
-rho_trial = np.array([
-    [1, 0, 0, 0, 0],
-    [0, 0, 0, 0, 0],
-    [0, 0, 0, 0, 0],
-    [0, 0, 0, 0, 0], 
-    [0, 0, 0, 0, 0]], dtype=complex)
-rho_rotated = rotate_QE_matrix(rho_trial, random_angle, random_direction)
+# rho_trial = np.array([
+#     [1, 0, 0, 0, 0],
+#     [0, 0, 0, 0, 0],
+#     [0, 0, 0, 0, 0],
+#     [0, 0, 0, 0, 0], 
+#     [0, 0, 0, 0, 0]], dtype=complex)
+# rho_rotated = rotate_QE_matrix(rho_trial, random_angle, random_direction)
 
-with np.printoptions(precision=3, suppress=True):
-    print("Rotated Quantum ESPRESSO state matrix:")
-    print(rho_rotated)
-    print("Trace of rotated matrix:", np.trace(rho_rotated).real)
+# with np.printoptions(precision=3, suppress=True):
+#     print("Rotated Quantum ESPRESSO state matrix:")
+#     print(rho_rotated)
+#     print("Trace of rotated matrix:", np.trace(rho_rotated).real)
 # %%

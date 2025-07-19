@@ -2,7 +2,7 @@
 
 <img src="LordCapulet.png" alt="LordCapulet" width="400">
 
-**LordCapulet** is an AiiDA plugin that provides automated workflows for constrained DFT+U calculations using OSCDFT (Occupation-Site Constrained DFT). The main feature is the **GlobalConstrainedSearchWorkChain**, which performs intelligent, iterative searches through occupation matrix space to find optimal electronic configurations.
+**LordCapulet** is an AiiDA plugin that provides automated workflows for constrained DFT+U calculations using OSCDFT (Oxidation-State Constrained DFT). The main feature is the **GlobalConstrainedSearchWorkChain**, which performs iterative searches through occupation matrix space to find optimal electronic configurations.
 
 ## Key Features
 
@@ -14,12 +14,12 @@ The flagship workflow that orchestrates an automated search process:
 3. **Batch Processing**: Runs N proposals per generation until Nmax total calculations are completed
 4. **Adaptive Sampling**: Uses both Markovian (generation-to-generation) and holistic (all-history) proposal modes
 
-This workflow enables systematic exploration of electronic ground states in strongly correlated materials, automatically discovering multiple metastable states and their energetic ordering.
+This workflow enables systematic exploration of electronic ground states, automatically discovering multiple magnetic local minima.
 
 ### Additional Components
 
 - **ConstrainedPWCalculation**: A custom PW calculation that handles OSCDFT constraints
-- **AFMScanWorkChain**: Workflow for scanning different antiferromagnetic configurations
+- **AFMScanWorkChain**: Workflow for scanning different ferro-antiferromagnetic configurations
 - **ConstrainedScanWorkChain**: Workflow for running multiple constrained calculations with different target occupation matrices
 
 ## Installation
