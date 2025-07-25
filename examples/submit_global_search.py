@@ -10,7 +10,8 @@ from ase.io import read
 aiida.load_profile()
 
 # Load structure (adapt this to your system)
-atoms = read('NiO.scf.in', format='espresso-in')  # Adjust path as needed
+# atoms = read('NiO.scf.in', format='espresso-in')  # Adjust path as needed
+atoms = read('FeO.scf.in', format='espresso-in')  # Adjust path as needed
 
 def tag_and_list_atoms(atoms):
     """
@@ -97,7 +98,7 @@ parameters = Dict(dict={
     'ELECTRONS': {
         'conv_thr': 1.0e-8,
         'mixing_beta': 0.3,
-        'electron_maxstep': 200,
+        'electron_maxstep': 500,
     },
 })
 #%%
@@ -112,8 +113,8 @@ oscdft_card = Dict(dict={
 })
 
 # Global search parameters
-Nmax = 500   # Total number of constrained calculations to perform 
-N = 60     # Number of proposals per generation
+Nmax = 500   # Total number of constrained calculations to perform
+N = 60      # Number of proposals per generation
 
 json_readfile = '/home/carta_a/Documents/Local_calculations/aiida-LordCapulet/examples/NiO_mixing_lTF_beta0.3_oscdft_data.json'
 # Set up the inputs dictionary

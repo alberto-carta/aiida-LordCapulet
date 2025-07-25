@@ -102,7 +102,7 @@ See `tests/README.md` for detailed testing information.
 
 - Python >= 3.8
 - AiiDA >= 2.0.0
-- aiida-quantumespresso >= 4.0.0
+- aiida-quantumespresso >= for now personal fork
 - numpy
 
 ## Package Structure
