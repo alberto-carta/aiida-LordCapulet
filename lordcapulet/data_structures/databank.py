@@ -598,6 +598,9 @@ class DataBank:
         """
         forward_map = {}  # (atom, spin, i, j) -> flat_index
         reverse_map = []  # [flat_index] -> (atom, spin, i, j)
+        diagonal_elements = {} # (atom, spin) -> list of diagonal flat indices
+        off_diagonal_elements = {} # (atom, spin) -> list of off-diagonal flat indices
+        
         idx = 0
         
         for atom in sorted(atom_ids):
@@ -609,11 +612,17 @@ class DataBank:
                     for j in range(i, n_orb):
                         forward_map[(atom, spin, i, j)] = idx
                         reverse_map.append((atom, spin, i, j))
+                        if i == j:
+                            diagonal_elements.setdefault((atom, spin), []).append(idx)
+                        else:
+                            off_diagonal_elements.setdefault((atom, spin), []).append(idx)
                         idx += 1
         
         return {
             'forward_map': forward_map,
             'reverse_map': reverse_map,
+            'diagonal_elements': diagonal_elements,
+            'off_diagonal_elements': off_diagonal_elements,
             'size': idx,
             'atom_ids': atom_ids,
             'spins': spins

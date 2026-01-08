@@ -188,9 +188,9 @@ class VectorizedPhysicsMean(Mean):
             total_M_contrib += -(self.J / 4.0) * M_atom.pow(2) #+ self.J_lin * M_atom.abs()
             
             # Part 2: Hubbard U contribution
-            # U * tr(n * (1-n)) = U * (tr(n) - tr(n^2))
-            contrib_U_up = self.U * (tr_up - tr_n_sq_up)
-            contrib_U_down = self.U * (tr_down - tr_n_sq_down)
+            # U/2 * tr(n * (1-n)) = U/2 * (tr(n) - tr(n^2))
+            contrib_U_up = self.U/2 * (tr_up - tr_n_sq_up)
+            contrib_U_down = self.U/2 * (tr_down - tr_n_sq_down)
             total_U_contrib += contrib_U_up + contrib_U_down
         
         # Total mean (constant handles overall energy scale)
