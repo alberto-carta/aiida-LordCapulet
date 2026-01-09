@@ -15,6 +15,16 @@ json_filename = f"{material_name}_scan_data_extractor_redone.json"
 
 
 databank = DataBank.from_json(json_filename)
+
+
+global_node  = aiida.orm.load_node(112057)
+
+calc_list = global_node.outputs.all_calculation_pks.get_list()
+
+
+# calc_node = aiida.orm.load_node(calc_list[0])
+
+databank_from_chain = DataBank.from_calculation_pks(calc_list)
 # %%
 databank.to_dataframe()
 

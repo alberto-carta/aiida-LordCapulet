@@ -413,3 +413,28 @@ class AnalyticCustomPreference(AnalyticAcquisitionFunction):
         
         # 3. Combine: The preference score "gates" the energy score
         return energy_score * pref_score.squeeze(-1)
+
+
+class BatchedAcqFunc:
+    """
+    Wraps an acquisition function to evaluate inputs in mini-batches.
+    This prevents OOM errors when processing large candidate pools.
+    """
+    def __init__(self, acq_func, batch_size):
+        self.acq_func = acq_func
+        self.batch_size = batch_size
+
+    def __call__(self, X):
+        # X usually has shape (num_candidates, batch_shape, q, d)
+        # BoltzmannSampling moves candidates to the 0-th dimension.
+        results = []
+        
+        for i in range(0, X.shape[0], self.batch_size):
+            batch_X = X[i : i + self.batch_size]
+            results.append(self.acq_func(batch_X))
+        
+        return torch.cat(results)
+    
+    # Forward attribute lookups to the original acq_func (e.g. for .model)
+    def __getattr__(self, name):
+        return getattr(self.acq_func, name)
