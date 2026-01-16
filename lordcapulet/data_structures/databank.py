@@ -76,6 +76,9 @@ class DataBank:
     # ============================================================================
     # Factory methods - Loading data
     # ============================================================================
+
+
+    # Needs implementation from a list of 
     
     @classmethod
     def from_json(cls, json_path: Union[str, Path], only_converged: bool = True,
