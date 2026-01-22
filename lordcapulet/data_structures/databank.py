@@ -203,6 +203,96 @@ class DataBank:
         
         return cls(records)
     
+    @classmethod
+    def from_matrices(cls, 
+                      occ_matrices: List[OccupationMatrixData],
+                      energies: List[float],
+                      pks: Optional[List[int]] = None,
+                      converged: Optional[List[bool]] = None,
+                      energy_uncertainties: Optional[List[float]] = None,
+                      metadata: Optional[List[Dict[str, Any]]] = None,
+                      include_electron_number: bool = False,
+                      include_moment: bool = False) -> 'DataBank':
+        """
+        Create DataBank from lists of occupation matrices and energies.
+        
+        This is useful when you have occupation matrices from sources other than
+        AiiDA calculations (e.g., from proposal functions, external calculations).
+        
+        Args:
+            occ_matrices: List of OccupationMatrixData objects
+            energies: List of energies (eV) for each calculation
+            pks: Optional list of PKs. If None, auto-generate sequential PKs starting from 0
+            converged: Optional list of convergence status. If None, all assumed converged (True)
+            energy_uncertainties: Optional list of energy uncertainties. If None, all set to 0.0
+            metadata: Optional list of metadata dicts. If None, empty dicts used
+            include_electron_number: If True, compute and store electron numbers per atom
+            include_moment: If True, compute and store magnetic moments per atom
+            
+        Returns:
+            DataBank instance
+            
+        Raises:
+            ValueError: If lists have inconsistent lengths
+            
+        Examples:
+            >>> # Create from matrices and energies only
+            >>> databank = DataBank.from_matrices(occ_matrices, energies)
+            
+            >>> # Create with custom PKs and convergence status
+            >>> databank = DataBank.from_matrices(
+            ...     occ_matrices, energies, 
+            ...     pks=[1000, 1001, 1002],
+            ...     converged=[True, True, False]
+            ... )
+        """
+        n = len(occ_matrices)
+        
+        # Validate input lengths
+        if len(energies) != n:
+            raise ValueError(f"Length mismatch: {n} matrices but {len(energies)} energies")
+        
+        if pks is not None and len(pks) != n:
+            raise ValueError(f"Length mismatch: {n} matrices but {len(pks)} PKs")
+        
+        if converged is not None and len(converged) != n:
+            raise ValueError(f"Length mismatch: {n} matrices but {len(converged)} convergence flags")
+        
+        if energy_uncertainties is not None and len(energy_uncertainties) != n:
+            raise ValueError(f"Length mismatch: {n} matrices but {len(energy_uncertainties)} uncertainties")
+        
+        if metadata is not None and len(metadata) != n:
+            raise ValueError(f"Length mismatch: {n} matrices but {len(metadata)} metadata entries")
+        
+        # Set defaults
+        if pks is None:
+            pks = list(range(n))
+        
+        if converged is None:
+            converged = [True] * n
+        
+        if energy_uncertainties is None:
+            energy_uncertainties = [0.0] * n
+        
+        if metadata is None:
+            metadata = [{}] * n
+        
+        # Build records
+        records = []
+        for i in range(n):
+            record = {
+                'pk': pks[i],
+                'energy': energies[i],
+                'energy_uncertainty': energy_uncertainties[i],
+                'converged': converged[i],
+                'occ_data': occ_matrices[i],
+                'metadata': metadata[i]
+            }
+            records.append(record)
+        
+        return cls(records, include_electron_number=include_electron_number,
+                   include_moment=include_moment)
+    
     # ============================================================================
     # Basic operations - Immutable
     # ============================================================================

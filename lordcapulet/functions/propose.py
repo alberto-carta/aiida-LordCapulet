@@ -229,13 +229,14 @@ def propose_new_constraints(occ_matr_list, N, mode='random', debug=True, reporte
             
             if debug:
                 reporter(f"Energies provided: {energies}")
-            
+                reporter(f"Remaining kwargs keys: {list(kwargs.keys())}")
+
+            # Call with correct positional argument order: occ_matr_list, energies, natoms, N
             proposals = propose_gaussian_process_constraints(
-                occ_matr_list, natoms, N, debug=debug, energies=energies, reporter=reporter, **kwargs
+                occ_matr_list, energies, natoms, N, debug=debug, reporter=reporter, **kwargs
             )
 
         case 'read':
-            # old code is present and not relevant anymore
             # raise implmementation error for now
             raise NotImplementedError("The 'read' mode needs to be implemented")
 

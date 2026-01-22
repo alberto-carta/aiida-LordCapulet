@@ -38,6 +38,7 @@ def get_botorch_lengthscale_prior(ard_num_dims: int):
     # Create the constraint
     constraint = GreaterThan(
         2.5e-2, 
+        # 2.5e-5, 
         transform=None, 
         initial_value=prior.mode
     )

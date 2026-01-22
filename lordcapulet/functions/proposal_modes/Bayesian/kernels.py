@@ -13,7 +13,7 @@ from gpytorch.kernels import (
     ScaleKernel, AdditiveKernel, ProductKernel
 )
 from itertools import combinations
-from priors import get_botorch_lengthscale_prior, get_outputscale_prior
+from .priors import get_botorch_lengthscale_prior, get_outputscale_prior
 
 
 def get_spin_indices(databank, atom_id):
