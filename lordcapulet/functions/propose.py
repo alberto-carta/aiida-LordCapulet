@@ -9,6 +9,7 @@ from aiida.orm import Dict, List, Int, Float, Str
 from aiida.engine import calcfunction, Process
 
 from .proposal_modes import propose_random_constraints, propose_random_so_n_constraints
+from .proposal_modes import propose_gaussian_process_constraints
 from lordcapulet.data_structures import OccupationMatrixData, OccupationMatrixAiidaData, extract_occupations_from_calc, filter_atoms_by_species
 
 
@@ -129,6 +130,15 @@ def aiida_propose_occ_matrices_from_results(
         reporter(f"Using proposal mode: {mode.value} with N = {N.value} samples per generation")
 
 
+    # if the mode is 'gp' or 'gaussian_process' we need to
+    # also pass the total energies from the calculation pks
+
+    if mode.value in ['gp', 'gaussian_process']:
+        energies = [ load_node(pk).outputs.output_parameters.get_dict().get('energy') for pk in calc_pks.get_list() ]
+
+        kwargs_internal['energies'] = energies
+
+
 
     # Filter atoms by species if tm_atoms is provided
     if tm_atoms is not None:
@@ -150,6 +160,7 @@ def aiida_propose_occ_matrices_from_results(
                                     N=N.value,
                                     debug=debug.value,
                                     mode=mode.value,
+                                    reporter=reporter,
                                     **kwargs_internal
                                     )
 
@@ -166,7 +177,7 @@ def aiida_propose_occ_matrices_from_results(
     return List(list=[node.pk for node in dict_nodes])
 
 
-def propose_new_constraints(occ_matr_list, N, mode='random', debug=True, **kwargs):
+def propose_new_constraints(occ_matr_list, N, mode='random', debug=True, reporter=None, **kwargs):
     """
     Generate N new occupation matrix proposals from existing data.
     
@@ -174,11 +185,16 @@ def propose_new_constraints(occ_matr_list, N, mode='random', debug=True, **kwarg
     
     :param occ_matr_list: List of OccupationMatrixData objects to use as reference
     :param N: Number of proposals to generate
-    :param mode: Proposal generation mode ('random', 'random_so_n', or 'read')
+    :param mode: Proposal generation mode ('random', 'random_so_n', 'gaussian_process', or 'read')
     :param debug: Whether to print debug information
+    :param reporter: Optional callable for logging (if None, uses print)
     :param kwargs: Additional mode-specific parameters
     :return: List of N OccupationMatrixData objects (proposals)
     """
+    # Setup reporter
+    if reporter is None:
+        reporter = print
+    
     if N < 1:
         raise ValueError("N must be greater than or equal to 1")
     
@@ -190,11 +206,11 @@ def propose_new_constraints(occ_matr_list, N, mode='random', debug=True, **kwarg
     nspin = 2  # up and down spin
 
     if debug:
-        print(f"Number of atoms: {natoms}")
-        print(f"Number of spins: {nspin}")
-        print(f"Number of orbitals: {norbitals}")
-        print(f"Atom labels: {first_occ_data.get_atom_labels()}")
-        print(f"Atom species: {first_occ_data.get_atom_species()}")
+        reporter(f"Number of atoms: {natoms}")
+        reporter(f"Number of spins: {nspin}")
+        reporter(f"Number of orbitals: {norbitals}")
+        reporter(f"Atom labels: {first_occ_data.get_atom_labels()}")
+        reporter(f"Atom species: {first_occ_data.get_atom_species()}")
 
     # implement case switch for mode
     match mode:
@@ -206,8 +222,17 @@ def propose_new_constraints(occ_matr_list, N, mode='random', debug=True, **kwarg
             proposals = propose_random_so_n_constraints(occ_matr_list, natoms, N, debug=debug, **kwargs)
 
         case 'gaussian_process' | 'gp':
-            # placeholder for future implementation
-            raise NotImplementedError("Gaussian Process proposal mode is not yet implemented")
+            # Pop energies from kwargs (required for GP mode)
+            energies = kwargs.pop('energies', None)
+            if energies is None:
+                raise ValueError("Energies must be provided for Gaussian Process proposal mode")
+            
+            if debug:
+                reporter(f"Energies provided: {energies}")
+            
+            proposals = propose_gaussian_process_constraints(
+                occ_matr_list, natoms, N, debug=debug, energies=energies, reporter=reporter, **kwargs
+            )
 
         case 'read':
             # old code is present and not relevant anymore

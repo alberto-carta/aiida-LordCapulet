@@ -14,8 +14,7 @@ from lordcapulet.utils.so_n_decomposition import (
     canonicalize_angles
 )
 from lordcapulet.data_structures import OccupationMatrixData
-from .random_mode import _calculate_average_traces, _create_random_diagonal_matrices
-
+from .shared_functionality import calculate_average_traces, create_random_diagonal_matrices
 
 def propose_random_so_n_constraints(occ_matr_list, natoms, N, debug=False, **kwargs) -> List[OccupationMatrixData]:
     """
@@ -59,7 +58,7 @@ def propose_random_so_n_constraints(occ_matr_list, natoms, N, debug=False, **kwa
     # STEP 1: Determine target electron counts (traces) for each atom
     if 'target_traces' not in kwargs:
         # Calculate average traces from existing occupation matrices (reuse from random_mode)
-        average_traces = _calculate_average_traces(occ_matr_list, natoms, debug)
+        average_traces = calculate_average_traces(occ_matr_list, natoms, debug)
     else:
         average_traces = np.array(kwargs['target_traces'])
 
@@ -100,7 +99,7 @@ def propose_random_so_n_constraints(occ_matr_list, natoms, N, debug=False, **kwa
                 print(f"      Target electrons = {target_oxidation}")
             
             # STEP 3b: Create random diagonal matrices with 1s and 0s (reuse from random_mode)
-            target_matrix_np = _create_random_diagonal_matrices(dim, target_oxidation)
+            target_matrix_np = create_random_diagonal_matrices(dim, target_oxidation)
             
             # STEP 3c: Generate random Euler angles
             euler_angles = np.random.uniform(-np.pi, np.pi, len(generators))
