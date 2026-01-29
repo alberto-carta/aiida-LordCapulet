@@ -166,3 +166,44 @@ def real_databank(real_databank_path):
         pytest.skip(f"Real data file not found: {real_databank_path}")
     
     return DataBank.from_json(real_databank_path, only_converged=True)
+
+
+@pytest.fixture
+def gp_databank():
+    """
+    Real DataBank for GP integration testing.
+    
+    Loads FeO scan data from test fixtures directory.
+    This is a curated dataset specifically for testing Bayesian optimization.
+    
+    Use this fixture for:
+    - GP model training tests
+    - GP inference tests
+    - LOO validation tests
+    - End-to-end BO pipeline tests
+    """
+    from lordcapulet.data_structures.databank import DataBank
+    import os
+    
+    # Path to the FeO data in test fixtures
+    base_path = os.path.dirname(os.path.abspath(__file__))
+    json_path = os.path.join(
+        base_path, 
+        'fixtures',
+        'FeO_scan_data_extractor_redone.json'
+    )
+    
+    if not os.path.exists(json_path):
+        pytest.skip(f"GP test data not found: {json_path}")
+    
+    return DataBank.from_json(json_path, only_converged=True)
+
+
+@pytest.fixture
+def gp_databank_small(gp_databank):
+    """
+    Small subset of GP databank for faster integration tests.
+    
+    Returns first 50 calculations for quick smoke tests.
+    """
+    return gp_databank[:50] if len(gp_databank) > 50 else gp_databank
