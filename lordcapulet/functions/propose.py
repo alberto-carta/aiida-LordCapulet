@@ -111,6 +111,7 @@ def aiida_propose_occ_matrices_from_results(
     # This is necessary because propose_new_constraints expects standard Python types,
     # but AiiDA calcfunctions receive AiiDA node types (Dict, List, Int, Float, Str)
     kwargs_internal = {}
+    
     for key, value in kwargs.items():
         # Handle AiiDA Dict and List nodes by extracting their content
         if isinstance(value, (Dict, List)):
@@ -227,20 +228,22 @@ def propose_new_constraints(occ_matr_list, N, mode='random', debug=True, reporte
             if energies is None:
                 raise ValueError("Energies must be provided for Gaussian Process proposal mode")
             
+            gp_config = kwargs.pop('gp_config', None)
+
+
             if debug:
                 reporter(f"Energies provided: {energies}")
                 reporter(f"Remaining kwargs keys: {list(kwargs.keys())}")
 
             # Call with correct positional argument order: occ_matr_list, energies, natoms, N
             proposals = propose_gaussian_process_constraints(
-                occ_matr_list, energies, natoms, N, debug=debug, reporter=reporter, **kwargs
+                occ_matr_list, energies, natoms, N, gp_config=gp_config,
+                debug=debug, reporter=reporter, **kwargs
             )
 
         case 'read':
             # raise implmementation error for now
             raise NotImplementedError("The 'read' mode needs to be implemented")
 
-        
-        
     
     return proposals

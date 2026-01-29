@@ -14,7 +14,7 @@ except ImportError:
 def run_with_pytest():
     """Run tests using pytest if available."""
     if not PYTEST_AVAILABLE:
-        print("❌ pytest not available. Please install it with: pip install pytest")
+        print(">.< pytest not available. Please install it with: pip install pytest")
         print("   Or use the simple test runner: python run_tests.py")
         return False
     
@@ -30,6 +30,6 @@ def run_with_pytest():
 
 if __name__ == "__main__":
     if run_with_pytest():
-        print("🎉 All tests passed!")
+        print("^.^ All tests passed!")
     else:
-        print("❌ Some tests failed or pytest unavailable")
+        print(">.< Some tests failed or pytest unavailable")

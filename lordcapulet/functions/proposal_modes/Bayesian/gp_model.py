@@ -242,7 +242,7 @@ def print_kernel_diagnostics(model, reporter=print):
     """
     import gpytorch
     
-    reporter("\n" + "="*60)
+    reporter("="*60)
     reporter(f"{'KERNEL TYPE':<30} | {'VARIANCE (Outputscale)':<25}")
     reporter("="*60)
     
@@ -291,4 +291,4 @@ def print_kernel_diagnostics(model, reporter=print):
             
         reporter(f"{name:<30} | {variance:<25}")
     
-    reporter("="*60 + "\n")
+    reporter("="*60)

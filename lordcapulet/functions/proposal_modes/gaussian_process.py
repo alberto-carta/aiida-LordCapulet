@@ -47,6 +47,7 @@ def propose_gaussian_process_constraints(
     energies: list[float],
     natoms: int,
     N: int,
+    gp_config: Optional[Dict[str, Any]] = None,
     debug: bool = False,
     reporter=None,
     **kwargs) -> List[OccupationMatrixData]:
@@ -79,60 +80,67 @@ def propose_gaussian_process_constraints(
     # ========================================================================
     # STEP 1: Input Validation
     # ========================================================================
-    
-    CONFIG = {
-    # Device
-    "device": "cuda" if torch.cuda.is_available() else "cpu",
-    
-    # Physics Mean Function
-    "mean": {
-        "type": "VectorizedPhysicsMean",
-        # "type": "HubbardUMean",
-        "J_prior": {"mean": 0.5, "std": 0.1},
-        "U_prior": {"mean": 5.0, "std": 0.2},
-    },
-    
-    # Kernel Configuration
-    "kernel": {
-        "local": {
-            "matern": {"enabled": True, "nu": 2.5, "outputscale_prior": {"mean": 0.4, "std": 0.2}},
-        },
-        "nonlocal": {
-            "residual": {"enabled": True, "outputscale_prior": {"mean": 0.05, "std": 0.01}},
-        },
-        "spin_flip_invariant": True,
-    },
-    
-    # Acquisition Function
-    "acquisition": {
-        "beta": 0.5,  # Exploration parameter (0=pure exploitation)
-        "use_preference": True,
-        "trace_target": None,  # Target electron count
-        "trace_sigma": None,  # Increased to allow more variation 
-        "use_eigenvalue_preference": False,  # Eigenvalue constraints
-        "eigenvalue_k": 20000.0,
-        "supergaussian_index": 4,  # Super-Gaussian index for trace preference
-    },
-    
-    # Optimization
-    "optimization": {
-        "num_candidates": N,
-        "optim_strategy": "Boltzmann",  # "optimize" or "Boltzmann"
-        "init_strategy": "patchwork",  # "best_train", "patchwork", or None
-        "ensamble_size": 100000,  # Number of candidates to generate for acquisition function, 
-        # this should be high for Boltzmann sampling (>10000), but can be 
-        # lower if you want to optimize the acquisition function instead
-        "patchwork_params": {
-            "apply_rotation": True,
-            "rotation_prob": 0.2,
-            "rotation_type": "SO(3)",  # "SO(3)", "SO(N)" or "Mixed"
-        },
-        "Boltzmann_config": {
-            "eta": 30,  # Higher eta = more exploitation (lower temperature), eta is in 1/eV
-        },
-    }
 
-    }
+    
+    if gp_config is None:
+        reporter(f"No configuration provided, using default settings.")
+        gp_config = {
+                "device": "cuda" if torch.cuda.is_available() else "cpu",
+                
+                # Physics Mean Function
+                "mean": {
+                    "type": "VectorizedPhysicsMean",
+                    # "type": "HubbardUMean",
+                    "J_prior": {"mean": 0.5, "std": 0.1},
+                    "U_prior": {"mean": 5.0, "std": 0.2},
+                },
+                
+                # Kernel Configuration
+                "kernel": {
+                    "local": {
+                        "matern": {"enabled": True, "nu": 2.5, "outputscale_prior": {"mean": 0.2, "std": 0.02}},
+                    },
+                    "nonlocal": {
+                        "residual": {"enabled": True, "outputscale_prior": {"mean": 0.05, "std": 0.01}},
+                    },
+                    "spin_flip_invariant": True,
+                },
+                
+                # Acquisition Function
+                "acquisition": {
+                    "beta": 0.3,  # Exploration parameter (0=pure exploitation)
+                    "use_preference": True,
+                    "trace_target": None,  # Target electron count
+                    "trace_sigma": None,  # Increased to allow more variation 
+                    "use_eigenvalue_preference": False,  # Eigenvalue constraints
+                    "eigenvalue_k": 20000.0,
+                    "supergaussian_index": 4,  # Super-Gaussian index for trace preference
+                },
+                
+                # Optimization
+                "optimization": {
+                    "optim_strategy": "Boltzmann",  # "optimize" or "Boltzmann"
+                    "init_strategy": "patchwork",  # "best_train", "patchwork", or None
+                    "ensamble_size": 100000,  # Number of candidates to generate for acquisition function, 
+                    # this should be high for Boltzmann sampling (>10000), but can be 
+                    # lower if you want to optimize the acquisition function instead
+                    "patchwork_params": {
+                        "apply_rotation": True,
+                        "rotation_prob": 0.2,
+                        "rotation_type": "Mixed",  # "SO(3)", "SO(N)" or "Mixed"
+                    },
+                    "Boltzmann_config": {
+                        "eta": 30,  # Higher eta = more exploitation (lower temperature), eta is in 1/eV
+                    },
+                }
+
+                }
+        
+    
+    # report configuration
+    reporter(f"--- Gaussian Process Configuration Parameters ---")
+    for key, value in gp_config.items():
+        reporter(f"  {key}: {value}")
     
     if energies is None:
         raise ValueError("Energies must be provided for Gaussian Process proposal mode")
@@ -147,7 +155,7 @@ def propose_gaussian_process_constraints(
             f"Need at least 3 samples for GP training, got {len(occ_matr_list)}"
         )
     
-    reporter(f"\n{'='*60}")
+    reporter(f"{'='*60}")
     reporter(f"GAUSSIAN PROCESS PROPOSAL MODE")
     reporter(f"{'='*60}")
     reporter(f"Training samples: {len(occ_matr_list)}")
@@ -158,7 +166,7 @@ def propose_gaussian_process_constraints(
     # STEP 2: Data Preparation - Create DataBank
     # ========================================================================
     
-    reporter(f"\n--- Data Preparation ---")
+    reporter(f"--- Data Preparation ---")
     
     # Extract metadata from first matrix
     first_occ_data = occ_matr_list[0]
@@ -191,27 +199,27 @@ def propose_gaussian_process_constraints(
     else:
         device = 'cuda' if torch.cuda.is_available() else 'cpu'
     
-    DEVICE = torch.device(device)
+    local_device = torch.device(device)
     
     atoms = databank.atom_ids
     x_data = databank.to_pytorch(
         atom_ids=atoms,
         spins=['up', 'down'],
         include_energies=False,
-        device=DEVICE
+        device=local_device
     )
-    y_data = torch.tensor(energies, dtype=torch.float32, device=DEVICE).unsqueeze(-1)
+    y_data = torch.tensor(energies, dtype=torch.float32, device=local_device).unsqueeze(-1)
     
     reporter(f"Tensor shapes: X={x_data.shape}, Y={y_data.shape}")
-    reporter(f"Device: {DEVICE}")
+    reporter(f"Device: {local_device}")
     
     
     
     # Get target number of electrons for and their standard deviations
     # to compute the preference trace values
 
-    trace_targets = CONFIG['acquisition'].get('trace_target', None)
-    trace_sigma = CONFIG['acquisition'].get('trace_sigma', None)
+    trace_targets = gp_config['acquisition'].get('trace_target', None)
+    trace_sigma = gp_config['acquisition'].get('trace_sigma', None)
     
     if trace_targets is None:
         trace_targets = [databank.get_electron_number(atom_id).mean() for atom_id in atoms]
@@ -226,10 +234,10 @@ def propose_gaussian_process_constraints(
     # STEP 4: Create and Train GP Model
     # ========================================================================
     
-    reporter(f"\n--- GP Model Training ---")
+    reporter(f"--- GP Model Training ---")
     
-    mean_config = kwargs.get('mean_config', CONFIG['mean'])
-    kernel_config = kwargs.get('kernel_config', CONFIG['kernel'])
+    mean_config = kwargs.get('mean_config', gp_config['mean'])
+    kernel_config = kwargs.get('kernel_config', gp_config['kernel'])
 
 
     
@@ -241,15 +249,15 @@ def propose_gaussian_process_constraints(
         atom_ids=atoms,
         mean_config=mean_config,
         kernel_config=kernel_config,
-        device=DEVICE
+        device=local_device
     )
     
-    # Add numerical stability constraint
-    # Use a tensor on the correct device to avoid device mismatch errors
-    noise_lower_bound = torch.tensor(1e-4, device=DEVICE)
-    model.likelihood.noise_covar.register_constraint(
-        "raw_noise", GreaterThan(noise_lower_bound)
-    )
+    # # Add numerical stability constraint
+    # # Use a tensor on the correct device to avoid device mismatch errors
+    # noise_lower_bound = torch.tensor(1e-4, device=local_device)
+    # model.likelihood.noise_covar.register_constraint(
+    #     "raw_noise", GreaterThan(noise_lower_bound)
+    # )
     
     # Train the model
     model = train_gp_model(
@@ -277,34 +285,33 @@ def propose_gaussian_process_constraints(
     # perform LOO CV evaluation using the function
     loo_results = evaluate_loo_cv(model, x_data, y_data.unsqueeze(-1), tikhonov_reg=1e-3)
 
-    if debug:
-        reporter(f"Leave-one-out cross-validation: Q² = {loo_results['q2']:.4f}, the closer to 1 the better")
-        reporter(f"Leave-one-out cross-validation: RMSE = {loo_results['rmse']:.4f} eV, the lower the better")
+    reporter(f"Leave-one-out cross-validation: Q² = {loo_results['q2']:.4f}, the closer to 1 the better")
+    reporter(f"Leave-one-out cross-validation: RMSE = {loo_results['rmse']:.4f} eV, the lower the better")
 
 
     
     # ========================================================================
-    # STEP 6: Generate Proposals (Placeholder)
+    # STEP 6: Generate Proposals 
     # ========================================================================
 
     # Create acquisition function
     base_acqf = UpperConfidenceBound(
         model=model,
-        beta=CONFIG["acquisition"]["beta"],
+        beta=gp_config["acquisition"]["beta"],
         posterior_transform=ScalarizedPosteriorTransform(weights=torch.tensor([-1.0])),
         maximize=True
     )
 
-    if CONFIG["acquisition"]["use_preference"]:
+    if gp_config["acquisition"]["use_preference"]:
         pref_func = partial(
             compute_total_preference_fast,
             databank=databank,
             atom_ids=atoms,
             trace_target=trace_targets,
             trace_sigma=trace_sigma,
-            use_eigenvalue_preference=CONFIG["acquisition"].get("use_eigenvalue_preference", False),
-            eig_k=CONFIG["acquisition"].get("eigenvalue_k", 20000.0),
-            supergaussian_index=CONFIG["acquisition"]["supergaussian_index"],
+            use_eigenvalue_preference=gp_config["acquisition"].get("use_eigenvalue_preference", False),
+            eig_k=gp_config["acquisition"].get("eigenvalue_k", 20000.0),
+            supergaussian_index=gp_config["acquisition"]["supergaussian_index"],
         )
         acqf = AnalyticCustomPreference(model=model, base_acqf=base_acqf,
                                         compute_preference_func=pref_func)
@@ -315,7 +322,7 @@ def propose_gaussian_process_constraints(
     batched_acqf = BatchedAcqFunc(acqf, batch_size=100)
 
     # check optimization strategy
-    optim_strategy = CONFIG["optimization"].get("optim_strategy", None)
+    optim_strategy = gp_config["optimization"].get("optim_strategy", None)
     
     if optim_strategy not in ["Boltzmann"]:
         raise ValueError(f'Optimization strategy "{optim_strategy}" not implemented. Please choose "Boltzmann"')
@@ -323,29 +330,32 @@ def propose_gaussian_process_constraints(
 
     if optim_strategy == "Boltzmann":
         # check if the "Boltzmann subdictionary" exists, if not raise error
-        if "Boltzmann_config" not in CONFIG["optimization"]:
+        if "Boltzmann_config" not in gp_config["optimization"]:
             raise ValueError('Boltzmann_config not found in optimization configuration, please provide "Boltzmann_config" subdictionary inside "optimization"')
+
+        reporter(f"--- Generating Proposals via Boltzmann Sampling ---")
+        reporter(f"inverse temperature eta = {gp_config['optimization']['Boltzmann_config']['eta']} 1/eV")
         
          
         
         # get the necessary parameters
-        ensamble_size = CONFIG["optimization"].get("ensamble_size", 10000)
-        eta = CONFIG["optimization"]["Boltzmann_config"].get("eta", 30)
+        ensamble_size = gp_config["optimization"].get("ensamble_size", 10000)
+        eta = gp_config["optimization"]["Boltzmann_config"].get("eta", 30)
 
-        candidate_list = torch.empty((N, x_data.shape[1]), device=DEVICE)
-        ensamble_batch = torch.empty((ensamble_size, x_data.shape[1]), device=DEVICE)
+        candidate_list = torch.empty((N, x_data.shape[1]), device=local_device)
+        ensamble_batch = torch.empty((ensamble_size, x_data.shape[1]), device=local_device)
 
         
         # get patchwork parameters
-        apply_rotation = CONFIG["optimization"]["patchwork_params"].get("apply_rotation", True)
-        rotation_prob = CONFIG["optimization"]["patchwork_params"].get("rotation_prob", 0.2)
-        rotation_type = CONFIG["optimization"]["patchwork_params"].get("rotation_type", "Mixed")
+        apply_rotation = gp_config["optimization"]["patchwork_params"].get("apply_rotation", True)
+        rotation_prob = gp_config["optimization"]["patchwork_params"].get("rotation_prob", 0.2)
+        rotation_type = gp_config["optimization"]["patchwork_params"].get("rotation_type", "Mixed")
         
         # time ensamble generation
         start_ensamble = time.time()
         for iguess in range(ensamble_size):
             guess = create_patchwork_guess(
-                        databank, x_data, atoms, DEVICE,
+                        databank, x_data, atoms, local_device,
                         apply_rotation=apply_rotation,
                         rotation_prob=rotation_prob,
                         rotation_type=rotation_type
@@ -368,7 +378,7 @@ def propose_gaussian_process_constraints(
         reporter(f"Sampled {len(candidates_list)} candidates in {end_sampling - start_sampling:.2f} seconds")
 
 
-        reporter("\n" + "="*80)
+        reporter("="*80)
         reporter("CANDIDATE SUMMARY")
         reporter("="*80)
         reporter(f"{'#':<4} {'Acqf':<12} {'Energy (eV)':<20} {'Uncertainty':<12}")
@@ -400,7 +410,7 @@ def propose_gaussian_process_constraints(
 
                 tot_electrons = np.trace(up_mat) + np.trace(down_mat)
                 tot_moment = np.trace(up_mat) - np.trace(down_mat)
-                reporter(f"\nAtom {atom_id} - Total electrons: {tot_electrons:.4f}, Total moment: {tot_moment:.4f}")
+                reporter(f"Atom {atom_id} - Total electrons: {tot_electrons:.4f}, Total moment: {tot_moment:.4f}")
                 reporter(f"Atom {atom_id} - Up matrix")
                 # print matrix with 4 decimal points
                 torch.set_printoptions(precision=4)
@@ -416,11 +426,6 @@ def propose_gaussian_process_constraints(
             matrices=candidates,
             atom_ids=atoms,
             spins=['up', 'down'])
-
-
-            # def from_pytorch(self, matrices: 'torch.Tensor',
-            #         atom_ids: Optional[List[str]] = None,
-            #         spins: List[str] = ['up', 'down']) -> List[OccupationMatrixData]:
 
 
     return proposals
