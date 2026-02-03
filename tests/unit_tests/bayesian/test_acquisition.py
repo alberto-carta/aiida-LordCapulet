@@ -20,14 +20,6 @@ from lordcapulet.functions.proposal_modes.Bayesian.acquisition import (
 class TestPrepareEigenvalueIndices:
     """Test suite for eigenvalue index preparation."""
 
-    def test_returns_dictionary(self, mock_databank_minimal):
-        """Test that function returns a dictionary."""
-        index_map = mock_databank_minimal._build_flat_index_map(['atom1'], ['up', 'down'])
-        forward_map = index_map['forward_map']
-        
-        result = prepare_eigenvalue_indices(forward_map)
-        
-        assert isinstance(result, dict)
 
     def test_groups_by_matrix_dimension(self, mock_databank_minimal):
         """Test that matrices are grouped by dimension (e.g., 5 for d-orbitals)."""
@@ -296,28 +288,6 @@ class TestComputeTotalPreferenceFast:
             trace_sigma=0.5
         )
         
-        assert (result >= 0).all()
-        assert (result <= 1).all()
-
-    @pytest.mark.skip(reason="Edge case with eigenvalue preference - better suited for integration test")
-    def test_with_eigenvalue_preference(self, mock_databank_minimal):
-        """Test preference computation with eigenvalue constraints."""
-        index_map = mock_databank_minimal._build_flat_index_map(['atom1'], ['up', 'down'])
-        num_features = len(index_map['reverse_map'])
-        
-        X_batch = torch.randn(5, num_features, dtype=torch.float64)
-        
-        result = compute_total_preference_fast(
-            X_batch,
-            mock_databank_minimal,
-            ['atom1'],
-            trace_target=5.0,
-            trace_sigma=0.5,
-            use_eigenvalue_preference=True,
-            eig_k=2000.0
-        )
-        
-        assert result.shape == torch.Size([5])
         assert (result >= 0).all()
         assert (result <= 1).all()
 

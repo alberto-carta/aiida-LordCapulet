@@ -99,7 +99,7 @@ def train_gp_model(model, train_X, train_Y, training_config):
         fit_gpytorch_mll(mll)
         
     elif method == "sgd":
-        # Custom SGD training loop (following BoTorch tutorial)
+        # Custom SGD training loop 
         # _train_with_sgd(model, mll, train_X, train_Y, training_config)
         raise NotImplementedError("SGD training method is currently disabled due to issues with Standardize transform")
         

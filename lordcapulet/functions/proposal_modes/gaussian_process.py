@@ -80,8 +80,8 @@ def propose_gaussian_process_constraints(
     # ========================================================================
     # STEP 1: Input Validation
     # ========================================================================
-
     
+    # check if gp_config is provided in the kwargs, if not use default
     if gp_config is None:
         reporter(f"No configuration provided, using default settings.")
         gp_config = {
@@ -252,12 +252,13 @@ def propose_gaussian_process_constraints(
         device=local_device
     )
     
-    # # Add numerical stability constraint
-    # # Use a tensor on the correct device to avoid device mismatch errors
-    # noise_lower_bound = torch.tensor(1e-4, device=local_device)
-    # model.likelihood.noise_covar.register_constraint(
-    #     "raw_noise", GreaterThan(noise_lower_bound)
-    # )
+    # Add numerical stability constraint, basically this prevents situations when you have
+    # duplicate points with very similar input features from causing singular matrix inversion issues
+    noise_lower_bound = torch.tensor(1e-4, device=local_device)
+    model.likelihood.noise_covar.register_constraint(
+        "raw_noise", GreaterThan(noise_lower_bound)
+    )
+
     
     # Train the model
     model = train_gp_model(

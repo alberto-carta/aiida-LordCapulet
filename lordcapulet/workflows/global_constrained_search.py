@@ -160,6 +160,10 @@ class GlobalConstrainedSearchWorkChain(WorkChain):
         # Propose initial matrices for first constrained batch
         proposal_kwargs = {}
         if 'proposal_kwargs' in self.inputs:
+
+            # add generation number to proposal kwargs
+            proposal_kwargs['current_generation'] = Int(self.ctx.generation)
+
             # Convert proposal_kwargs to AiiDA types if needed
             for key, value in self.inputs.proposal_kwargs.get_dict().items():
                 if isinstance(value, str):
@@ -206,6 +210,10 @@ class GlobalConstrainedSearchWorkChain(WorkChain):
         self.report(f"Starting generation {self.ctx.generation} with {n_proposals} proposals")
         
         # Take only the number of proposals we need
+        # THIS MIGHT NEED A CHANGE IF ONE NEEDS TO CHANGET THE NUMBER
+        # OF PROPOSALS PER GENERATION, FOR INSTANCE FOR INITIAL GENERATION
+        # OF GAUSSIAN PROCESS PROPOSALS
+        
         current_proposals = self.ctx.current_proposals[:n_proposals]
         
         # Build constrained scan
@@ -269,6 +277,10 @@ class GlobalConstrainedSearchWorkChain(WorkChain):
         # If we haven't reached Nmax, propose new matrices for next iteration
         if self.ctx.N_cumulative + len(calculation_pks.get_list()) < self.inputs.Nmax.value:
             proposal_kwargs = {}
+
+            # add generation number to proposal kwargs
+            proposal_kwargs['current_generation'] = Int(self.ctx.generation)
+
             if 'proposal_kwargs' in self.inputs:
                 # Convert proposal_kwargs to AiiDA types if needed
                 for key, value in self.inputs.proposal_kwargs.get_dict().items():
@@ -284,6 +296,7 @@ class GlobalConstrainedSearchWorkChain(WorkChain):
                         proposal_kwargs[key] = Dict(dict=value)
                     else:
                         proposal_kwargs[key] = value
+                
             
             # Choose which matrices to use for proposal based on holistic mode
             if self.inputs.proposal_holistic.value:

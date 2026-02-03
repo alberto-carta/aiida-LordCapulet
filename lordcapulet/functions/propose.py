@@ -235,11 +235,38 @@ def propose_new_constraints(occ_matr_list, N, mode='random', debug=True, reporte
                 reporter(f"Energies provided: {energies}")
                 reporter(f"Remaining kwargs keys: {list(kwargs.keys())}")
 
-            # Call with correct positional argument order: occ_matr_list, energies, natoms, N
-            proposals = propose_gaussian_process_constraints(
-                occ_matr_list, energies, natoms, N, gp_config=gp_config,
-                debug=debug, reporter=reporter, **kwargs
-            )
+
+            # test for the existence of current generation in kwargs
+            current_generation = kwargs.pop('current_generation', None)
+            
+            assert current_generation is not None, "current_generation must be provided in kwargs for GP mode"
+
+            if current_generation == 0:
+                # this would need changing if one wants to have a different
+                # number of initial random proposals, needs changing also
+                # in the workchain 
+                N_initial_random = kwargs.get('N_initial_random', N)
+
+                reporter(f"Current generation is {current_generation}, proposing {N_initial_random} random constraints for initial GP training")
+                proposals = propose_random_constraints(occ_matr_list, natoms,  N_initial_random, debug=debug, **kwargs)
+            else:
+
+                reporter(f"Current generation is {current_generation}, proposing {N} constraints using Gaussian Process")
+                # try to generate proposals using GP, if it fails, report the error  and traceback
+                # and fall back to random proposals
+
+                try:
+                    proposals = propose_gaussian_process_constraints(
+                        occ_matr_list, energies, natoms, N, gp_config=gp_config,
+                        debug=debug, reporter=reporter, **kwargs
+                    )
+                except Exception as e:
+                    reporter(f"Error in Gaussian Process proposal generation: {e}")
+                    import traceback
+                    traceback_str = traceback.format_exc()
+                    reporter(traceback_str)
+                    reporter("Falling back to random constraint proposals")
+                    proposals = propose_random_constraints(occ_matr_list, natoms,  N, debug=debug, **kwargs)
 
         case 'read':
             # raise implmementation error for now
