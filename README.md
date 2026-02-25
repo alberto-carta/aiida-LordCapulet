@@ -183,6 +183,7 @@ See `tests/README.md` for detailed testing information.
 - AiiDA >= 2.0.0
 - aiida-quantumespresso >= for now personal fork
 - numpy
+- pytorch
 
 ## Repository Structure
 
