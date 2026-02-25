@@ -112,16 +112,28 @@ class WorkchainDataExtractor:
         if 'globalconstrained' in process_type or 'global_constrained' in process_type:
             calculations = self._extract_from_global_search(workchain)
         elif 'afmscan' in process_type or 'afm_scan' in process_type:
+            # AFM scan: generation = None for all calculations
             calculations = self._extract_from_afm_scan(workchain)
+            # Create context for generation mapping
+            class SimpleContext:
+                pass
+            self.ctx = SimpleContext()
+            self.ctx.generation_map = {calc.pk: None for calc in calculations}
         elif 'constrainedscan' in process_type or 'constrained_scan' in process_type:
+            # Single constrained scan: generation = 0 for all calculations
             calculations = self._extract_from_constrained_scan(workchain)
+            # Create context for generation mapping
+            class SimpleContext:
+                pass
+            self.ctx = SimpleContext()
+            self.ctx.generation_map = {calc.pk: 0 for calc in calculations}
         else:
             raise ValueError(f"Unsupported workchain type: {process_type}")
         
         print(f"Found {len(calculations)} calculations")
         
         # Process the calculations
-        calc_data_list = self._process_calculations(calculations)
+        calc_data_list = self._process_calculations(calculations, self.ctx.generation_map if hasattr(self, 'ctx') and hasattr(self.ctx, 'generation_map') else {})
         
         # Build output data structure
         return self._build_output_data(
@@ -150,7 +162,11 @@ class WorkchainDataExtractor:
         print(f"Extracting calculation PK {calc_pk}")
         print(f"Calculation type: {getattr(calc_node, 'process_type', 'unknown')}")
         
-        calc_data = self._extract_calc_data(calc_node)
+        # Single calculation extraction: determine generation based on source
+        source = self._determine_source(calc_node)
+        generation_number = None if source == 'afm_workchain' else 0
+        
+        calc_data = self._extract_calc_data(calc_node, generation_number)
         
         if self.perform_so_n:
             self._print_regularization_summary()
@@ -161,13 +177,30 @@ class WorkchainDataExtractor:
         """Extract calculations from GlobalConstrainedSearchWorkChain."""
         calculations = []
         
+        # Create a simple context object to store generation mapping
+        class SimpleContext:
+            pass
+        self.ctx = SimpleContext()
+        self.ctx.generation_map = {}  # Maps calc_pk -> generation_number
+        
+        # Try to get generation information from workchain extras or by traversing called workchains
+        generation = 0
         for called_wc in workchain.called:
             process_type = getattr(called_wc, 'process_type', '').lower()
             
             if 'afmscan' in process_type or 'afm_scan' in process_type:
-                calculations.extend(self._extract_from_afm_scan(called_wc))
+                # AFM scans have no generation (generation 0, but we'll use None to distinguish)
+                calcs = self._extract_from_afm_scan(called_wc)
+                for calc in calcs:
+                    self.ctx.generation_map[calc.pk] = None
+                calculations.extend(calcs)
             elif 'constrainedscan' in process_type or 'constrained_scan' in process_type:
-                calculations.extend(self._extract_from_constrained_scan(called_wc))
+                # Constrained scans: increment generation for each scan workchain
+                calcs = self._extract_from_constrained_scan(called_wc)
+                for calc in calcs:
+                    self.ctx.generation_map[calc.pk] = generation
+                calculations.extend(calcs)
+                generation += 1
         
         return calculations
     
@@ -225,8 +258,13 @@ class WorkchainDataExtractor:
             return True
         return False
     
-    def _process_calculations(self, calculations: List[CalcJobNode]) -> List[Dict[str, Any]]:
-        """Process a list of calculations and extract data."""
+    def _process_calculations(self, calculations: List[CalcJobNode], generation_map: Dict[int, int] = None) -> List[Dict[str, Any]]:
+        """Process a list of calculations and extract data.
+        
+        Args:
+            calculations: List of calculation nodes
+            generation_map: Optional mapping of calc_pk -> generation_number
+        """
         # Reset regularization stats
         self.regularization_stats = {
             'total_decompositions': 0,
@@ -236,13 +274,17 @@ class WorkchainDataExtractor:
             'details': []
         }
         
+        if generation_map is None:
+            generation_map = {}
+        
         results = []
         
         if HAS_ALIVE_BAR and len(calculations) > 0:
             with alive_bar(len(calculations), title="Processing calculations") as bar:
                 for calc in calculations:
                     try:
-                        calc_data = self._extract_calc_data(calc)
+                        generation_number = generation_map.get(calc.pk, 0)
+                        calc_data = self._extract_calc_data(calc, generation_number)
                         if calc_data:
                             results.append(calc_data)
                     except Exception as e:
@@ -253,7 +295,8 @@ class WorkchainDataExtractor:
             print(f"Processing {len(calculations)} calculations...")
             for i, calc in enumerate(calculations):
                 try:
-                    calc_data = self._extract_calc_data(calc)
+                    generation_number = generation_map.get(calc.pk, 0)
+                    calc_data = self._extract_calc_data(calc, generation_number)
                     if calc_data:
                         results.append(calc_data)
                 except Exception as e:
@@ -269,11 +312,17 @@ class WorkchainDataExtractor:
         
         return results
     
-    def _extract_calc_data(self, calc: CalcJobNode) -> Dict[str, Any]:
-        """Extract data from a single calculation."""
+    def _extract_calc_data(self, calc: CalcJobNode, generation_number: int = None) -> Dict[str, Any]:
+        """Extract data from a single calculation.
+        
+        Args:
+            calc: Calculation node
+            generation_number: Generation number for constrained calculations (None for AFM, 0 for single scan)
+        """
         calc_data = {
             'pk': calc.pk,
             'exit_status': calc.exit_status,
+            'generation_number': generation_number,
             'converged': calc.exit_status == 0,
             'process_type': getattr(calc, 'process_type', 'unknown'),
             'calculation_source': self._determine_source(calc),

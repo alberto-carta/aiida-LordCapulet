@@ -150,8 +150,11 @@ from lordcapulet.functions import aiida_propose_occ_matrices_from_results
 # wc = load_node(48099)
 # wc = load_node(59516) # UO2 
 # wc = load_node(61435) # UO2 afm scan
-wc = load_node(94286) # UO2 constrained scan
-list_node = wc.outputs.all_occupation_matrices
+wc = load_node(112030) # UO2 constrained scan
+
+
+
+list_node = wc.outputs.all_constrained_matrices
 # pk_list = list_node.get_list()
 # list_node = load_node(62311).get_list() # UO2 constrained scan
 

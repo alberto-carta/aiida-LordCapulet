@@ -15,6 +15,16 @@ json_filename = f"{material_name}_scan_data_extractor_redone.json"
 
 
 databank = DataBank.from_json(json_filename)
+
+
+global_node  = aiida.orm.load_node(112057)
+
+calc_list = global_node.outputs.all_calculation_pks.get_list()
+
+
+# calc_node = aiida.orm.load_node(calc_list[0])
+
+databank_from_chain = DataBank.from_calculation_pks(calc_list)
 # %%
 databank.to_dataframe()
 
@@ -35,7 +45,21 @@ databank.get_electron_number()
 # now reload the databank adding electron number and magnetic moment to each entry
 databank = DataBank.from_json(json_filename, include_electron_number=True, include_moment=True)
 # %%
-databank.to_pytorch()
+import torch
+from lordcapulet.functions.proposal_modes.Bayesian.acquisition import prepare_eigenvalue_indices, compute_eigenvalue_preference
+torch_matrix = databank.to_pytorch()[0]
+# add violation to test
+torch_matrix[1] = 0.16
+atom_ids = databank.atom_ids
+spins = ['up', 'down']
+
+fw_map = databank.get_forward_index_map()
+batch_indices = prepare_eigenvalue_indices(fw_map)
+
+preference_scores = compute_eigenvalue_preference(torch_matrix, batch_indices, k=2000)
+
+preference_scores
+
 #%%
 import numpy as np
 from lordcapulet.data_structures.occupation_matrix import compute_occupation_distance
@@ -52,3 +76,4 @@ with np.printoptions(precision=4, suppress=True):
 
 
 # %%
+sem

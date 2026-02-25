@@ -29,8 +29,8 @@ class AFMScanWorkChain(WorkChain):
             cls.run_all,
             cls.gather_results,
         )
-        spec.output('all_occupation_matrices', valid_type=List)
-        spec.output('converged_calculations_pks', valid_type=List)
+        spec.output('converged_matrix_pks', valid_type=List)
+        spec.output('converged_calculation_pks', valid_type=List)
         spec.output('all_calculation_pks', valid_type=List)
 
     def prepare_configs(self):
@@ -108,7 +108,7 @@ class AFMScanWorkChain(WorkChain):
         """
         Collect the PKs and occupation matrices from all calculations.
         """
-        converged_calculations_pks = []
+        converged_calculation_pks = []
         calculation_pks = []
         occupation_matrices_pks = []
         
@@ -127,7 +127,7 @@ class AFMScanWorkChain(WorkChain):
 
             # Use the fresh node for checking status (use exit_status which is always available)
             if fresh_calc.is_finished and fresh_calc.exit_status == 0:
-                converged_calculations_pks.append(calc.pk)
+                converged_calculation_pks.append(calc.pk)
                 self.report(f"Calculation {i+1} completed successfully, PK: {calc.pk}")
                 
                 # Extract and store occupation matrix using unified structure
@@ -151,9 +151,9 @@ class AFMScanWorkChain(WorkChain):
                 self.report(f"Calculation {i+1} not yet finished, PK: {calc.pk}")
         
         # Store outputs
-        self.out('converged_calculations_pks', List(list=converged_calculations_pks).store())
+        self.out('converged_calculation_pks', List(list=converged_calculation_pks).store())
         self.out('all_calculation_pks', List(list=calculation_pks).store())
-        self.out('all_occupation_matrices', List(list=occupation_matrices_pks).store())
+        self.out('converged_matrix_pks', List(list=occupation_matrices_pks).store())
         
         successful_extractions = len([pk for pk in occupation_matrices_pks if pk != -1])
-        self.report(f"Magnetic scan completed. {len(converged_calculations_pks)}/{len(calculation_pks)} calculations converged, {successful_extractions}/{len(calculation_pks)} occupation matrices extracted")
+        self.report(f"Magnetic scan completed. {len(converged_calculation_pks)}/{len(calculation_pks)} calculations converged, {successful_extractions}/{len(calculation_pks)} occupation matrices extracted")

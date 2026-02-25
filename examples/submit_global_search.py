@@ -61,7 +61,7 @@ parameters = Dict(dict={
         'verbosity': 'high',
     },
     'SYSTEM': {
-        'ecutwfc': 80.0,    # Adjust as needed
+        'ecutwfc': 80.1,    # Adjust as needed
         'ecutrho': 640.0,   # Adjust as needed
         'occupations': 'smearing',
         'smearing': 'gaussian',
@@ -87,8 +87,8 @@ oscdft_card = Dict(dict={
 })
 
 # Global search parameters
-Nmax = 20   # Total number of constrained calculations to perform
-N = 10      # Number of proposals per generation
+Nmax = 40   # Total number of constrained calculations to perform
+N = 20      # Number of proposals per generation
 
 json_readfile = '/home/carta_a/Documents/Local_calculations/aiida-LordCapulet/examples/NiO_mixing_lTF_beta0.3_oscdft_data.json'
 # Set up the inputs dictionary

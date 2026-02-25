@@ -7,6 +7,7 @@ This module provides functions to:
 - Evaluate model performance
 """
 
+from pyexpat import model
 import torch
 from botorch.models import SingleTaskGP
 from gpytorch.mlls import ExactMarginalLogLikelihood
@@ -15,8 +16,8 @@ from botorch.models.transforms.outcome import Standardize
 import torch.optim as optim
 from sklearn.metrics import r2_score, root_mean_squared_error
 
-from mean_functions import VectorizedPhysicsMean
-from kernels import build_kernel
+from .mean_functions import VectorizedPhysicsMean
+from .kernels import build_kernel
 
 
 def create_gp_model(train_X, train_Y, databank, atom_ids, mean_config, kernel_config, device):
@@ -40,7 +41,11 @@ def create_gp_model(train_X, train_Y, databank, atom_ids, mean_config, kernel_co
     if mean_config["type"] == "VectorizedPhysicsMean":
         # When using Standardize transform, the mean function works in standardized space
         # Initialize constant to 0 (will learn the offset in standardized space)
-        constant_mean = 0.0
+        # constant_mean = 0.0
+
+        #initialize constant mean to average of trainY
+        # constant_mean = torch.mean(train_Y).item()
+        constant_mean = torch.min(train_Y).item()
         
         mean_module = VectorizedPhysicsMean(
             databank=databank,
@@ -64,8 +69,8 @@ def create_gp_model(train_X, train_Y, databank, atom_ids, mean_config, kernel_co
         train_Y=train_Y,
         mean_module=mean_module,
         covar_module=covar_module,
-        outcome_transform=Standardize(m=1),  # Standardize outputs to mean=0, std=1
-        # outcome_transform= None
+        # outcome_transform=Standardize(m=1),  # Standardize outputs to mean=0, std=1
+        outcome_transform= None
     )
     
     return model
@@ -94,7 +99,7 @@ def train_gp_model(model, train_X, train_Y, training_config):
         fit_gpytorch_mll(mll)
         
     elif method == "sgd":
-        # Custom SGD training loop (following BoTorch tutorial)
+        # Custom SGD training loop 
         # _train_with_sgd(model, mll, train_X, train_Y, training_config)
         raise NotImplementedError("SGD training method is currently disabled due to issues with Standardize transform")
         
@@ -106,240 +111,21 @@ def train_gp_model(model, train_X, train_Y, training_config):
     else:
         # Fallback to default
         fit_gpytorch_mll(mll)
+
+    # print value of the optimized loss
+    # 2. Compute the final loss manually
+    model.train()
+    mll.train()
+
+    with torch.no_grad():
+        # Pass the training data back through the model
+        # Note: model.train_inputs[0] and model.train_targets are stored by the GP
+        output = model(model.train_inputs[0])
+        loss = -mll(output, model.train_targets)
+
+    print(f"Final Total Loss (NMLL): {loss.item():.4f}") 
     
     return model
-
-# Should ask austin, they do not really work that well
-
-
-# def _train_with_sgd(model, mll, train_X, train_Y, training_config):
-#     """
-#     Train GP model using SGD optimizer (following BoTorch tutorial).
-    
-#     This allows customization of the training loop and works well when you need
-#     fine control over the optimization process or want to enforce constraints
-#     on physics parameters during training.
-    
-#     Note: When using outcome_transform=Standardize, the model internally handles
-#     the transformation, so we train on the original train_Y values.
-    
-#     Args:
-#         model: The GP model
-#         mll: Marginal log likelihood
-#         train_X: Training inputs
-#         train_Y: Training outputs (will be squeezed to 1D, in original scale)
-#         training_config: Dictionary with training parameters
-#     """
-#     from torch.optim import SGD, Adam
-    
-#     sgd_config = training_config.get("sgd", {})
-#     num_epochs = sgd_config.get("epochs", 150)
-#     lr = sgd_config.get("lr", 0.025)
-#     optimizer_type = sgd_config.get("optimizer", "sgd")  # "sgd" or "adam"
-#     print_every = sgd_config.get("print_every", 10)
-#     freeze_kernel = sgd_config.get("freeze_kernel", False)  # Only train mean parameters
-    
-#     # Freeze kernel parameters if requested, but KEEP NOISE TRAINABLE
-#     # The noise (likelihood) must be trainable for the mean to fit properly
-#     if freeze_kernel:
-#         print("Freezing kernel parameters - training mean function and noise")
-#         for name, param in model.named_parameters():
-#             if 'mean_module' not in name and 'likelihood' not in name:
-#                 param.requires_grad = False
-    
-#     # Collect trainable parameters
-#     trainable_params = [p for p in model.parameters() if p.requires_grad]
-#     print(f"Number of trainable parameters: {len(trainable_params)}")
-    
-#     # Choose optimizer
-#     if optimizer_type == "adam":
-#         optimizer = Adam(trainable_params, lr=lr)
-#         print(f"Training with Adam optimizer (lr={lr}, epochs={num_epochs})")
-#     else:
-#         optimizer = SGD(trainable_params, lr=lr)
-#         print(f"Training with SGD optimizer (lr={lr}, epochs={num_epochs})")
-    
-#     # Set model to training mode
-#     model.train()
-    
-#     # Debug: Check if we have outcome transform and inspect standardized targets
-#     has_transform = hasattr(model, 'outcome_transform') and model.outcome_transform is not None
-#     if has_transform:
-#         print(f"Using outcome transform: {type(model.outcome_transform).__name__}")
-#         # Show what the standardized targets look like
-#         with torch.no_grad():
-#             standardized_Y, _ = model.outcome_transform(train_Y)
-#             print(f"Original Y: mean={train_Y.mean():.2f}, std={train_Y.std():.2f}")
-#             print(f"Standardized Y: mean={standardized_Y.mean():.4f}, std={standardized_Y.std():.4f}")
-    
-#     for epoch in range(num_epochs):
-        
-#         # Clear gradients
-#         optimizer.zero_grad()
-        
-#         # Forward pass through the model to obtain the output MultivariateNormal
-#         output = model(train_X)
-        
-#         # Compute negative marginal log likelihood
-#         # The model's outcome_transform automatically handles standardization if present
-#         loss = -mll(output, train_Y.squeeze(-1))
-        
-#         # Back prop gradients
-#         loss.backward()
-        
-#         # Apply optimizer step
-#         optimizer.step()
-        
-#         # Print progress
-#         if (epoch + 1) % print_every == 0:
-#             loss_val = loss.item()
-#             noise_val = model.likelihood.noise.item()
-            
-#             print(f"Epoch {epoch+1:>3}/{num_epochs} - Loss: {loss_val:>4.3f} - Noise: {noise_val:>4.3f}", end="")
-            
-#             # Print physics parameters if available
-#             if hasattr(model.mean_module, 'J'):
-#                 print(f" - J: {model.mean_module.J.item():.4f} "
-#                     #   f"J_lin: {model.mean_module.J_lin.item():.4f} "
-#                       f"U: {model.mean_module.U.item():.4f} "
-#                       f"const: {model.mean_module.constant.item():.2f}")
-                
-#                 # Diagnostic: check mean predictions in standardized space
-#                 if (epoch + 1) == print_every:  # Only print once at start
-#                     with torch.no_grad():
-#                         mean_pred = model.mean_module(train_X)
-#                         if has_transform:
-#                             standardized_Y, _ = model.outcome_transform(train_Y)
-#                             print(f"    DEBUG: Mean pred range: [{mean_pred.min():.2f}, {mean_pred.max():.2f}], "
-#                                   f"Standardized Y range: [{standardized_Y.min():.2f}, {standardized_Y.max():.2f}]")
-#             else:
-#                 print()
-    
-#     print("Training complete")
-
-
-# def _train_two_stage(model, mll, train_X, train_Y, training_config):
-#     """
-#     Two-stage training strategy:
-#     1. Train mean function aggressively with kernel frozen
-#     2. Freeze mean and train kernel/likelihood to learn residuals
-    
-#     This forces the mean to capture the physics-based structure,
-#     then the kernel learns corrections/correlations.
-    
-#     Note: When using outcome_transform=Standardize, the model internally handles
-#     the transformation, so we train on the original train_Y values.
-    
-#     Args:
-#         model: The GP model
-#         mll: Marginal log likelihood
-#         train_X: Training inputs
-#         train_Y: Training outputs (will be squeezed to 1D, in original scale)
-#         training_config: Dictionary with training parameters
-#     """
-#     from torch.optim import Adam
-    
-#     two_stage_config = training_config.get("two_stage", {})
-    
-#     # Stage 1 config: Train mean only
-#     stage1_epochs = two_stage_config.get("stage1_epochs", 500)
-#     stage1_lr = two_stage_config.get("stage1_lr", 0.01)
-#     stage1_print_every = two_stage_config.get("stage1_print_every", 50)
-    
-#     # Stage 2 config: Train kernel only
-#     stage2_epochs = two_stage_config.get("stage2_epochs", 200)
-#     stage2_lr = two_stage_config.get("stage2_lr", 0.01)
-#     stage2_print_every = two_stage_config.get("stage2_print_every", 20)
-    
-#     print("\n" + "="*60)
-#     print("STAGE 1: Training mean function (kernel frozen)")
-#     print("="*60)
-    
-#     # Freeze kernel and likelihood parameters
-#     for name, param in model.named_parameters():
-#         if 'mean_module' not in name:
-#             param.requires_grad = False
-    
-#     # Collect trainable parameters (mean only)
-#     trainable_params = [p for p in model.parameters() if p.requires_grad]
-#     print(f"Trainable parameters: {len(trainable_params)} (mean function only)")
-    
-#     optimizer_stage1 = Adam(trainable_params, lr=stage1_lr)
-#     model.train()
-    
-#     # Debug: Check if we have outcome transform
-#     has_transform = hasattr(model, 'outcome_transform') and model.outcome_transform is not None
-#     if has_transform:
-#         print(f"Using outcome transform: {type(model.outcome_transform).__name__}")
-    
-#     for epoch in range(stage1_epochs):
-#         # Enforce constraints BEFORE forward pass
-#         # Tightened for standardized space (baseline: J~0.25, U~2.7)
-#         # with torch.no_grad():
-#         #     if hasattr(model.mean_module, 'J'):
-#         #         model.mean_module.J.clamp_(0.0, 1.0)
-#         #         model.mean_module.U.clamp_(0.0, 6.0)
-        
-#         optimizer_stage1.zero_grad()
-#         output = model(train_X)
-#         loss = -mll(output, train_Y.squeeze(-1))
-#         loss.backward()
-#         optimizer_stage1.step()
-        
-#         if (epoch + 1) % stage1_print_every == 0:
-#             print(f"Epoch {epoch+1:>3}/{stage1_epochs} - Loss: {loss.item():>4.3f}", end="")
-#             if hasattr(model.mean_module, 'J'):
-#                 print(f" - J: {model.mean_module.J.item():.4f} "
-#                       f"U: {model.mean_module.U.item():.4f} "
-#                       f"const: {model.mean_module.constant.item():.2f}")
-#             else:
-#                 print()
-    
-#     print("\n" + "="*60)
-#     print("STAGE 2: Training kernel/likelihood (mean frozen)")
-#     print("="*60)
-    
-#     # Freeze mean, unfreeze kernel and likelihood
-#     for name, param in model.named_parameters():
-#         if 'mean_module' in name:
-#             param.requires_grad = False
-#         else:
-#             param.requires_grad = True
-    
-#     # Collect trainable parameters (kernel + likelihood)
-#     trainable_params = [p for p in model.parameters() if p.requires_grad]
-#     print(f"Trainable parameters: {len(trainable_params)} (kernel + likelihood)")
-    
-#     optimizer_stage2 = Adam(trainable_params, lr=stage2_lr)
-    
-#     for epoch in range(stage2_epochs):
-#         # Enforce kernel parameter constraints BEFORE forward pass
-#         with torch.no_grad():
-#             if hasattr(model.likelihood, 'noise_covar'):
-#                 if hasattr(model.likelihood.noise_covar, 'raw_noise'):
-#                     model.likelihood.noise_covar.raw_noise.clamp_(min=-5.0)
-            
-#             for name, param in model.named_parameters():
-#                 if 'raw_lengthscale' in name or 'raw_outputscale' in name:
-#                     param.clamp_(min=-10.0, max=10.0)
-        
-#         optimizer_stage2.zero_grad()
-#         output = model(train_X)
-#         loss = -mll(output, train_Y.squeeze(-1))
-#         loss.backward()
-#         optimizer_stage2.step()
-        
-#         if (epoch + 1) % stage2_print_every == 0:
-#             noise_val = model.likelihood.noise.item()
-#             print(f"Epoch {epoch+1:>3}/{stage2_epochs} - Loss: {loss.item():>4.3f} - Noise: {noise_val:>4.3f}")
-    
-#     # Unfreeze all parameters for subsequent use
-#     for param in model.parameters():
-#         param.requires_grad = True
-    
-#     print("="*60)
-#     print("Two-stage training complete")
-#     print("="*60 + "\n")
 
 
 def evaluate_model(model, test_X, test_Y):
@@ -378,8 +164,76 @@ def evaluate_model(model, test_X, test_Y):
         "y_std": y_std_np,
     }
 
+def evaluate_loo_cv(model, train_X, train_Y, tikhonov_reg=1e-5, debug=False):
+    """
+    Evaluate model performance using Leave-One-Out Cross-Validation (LOO-CV).
+    
+    Args:
+        model: Trained GP model
+        train_X: Training inputs
+        train_Y: Training outputs
+    """
 
-def print_kernel_diagnostics(model):
+
+    model.eval() # Ensure we are in eval mode to access fixed parameters
+    
+    with torch.no_grad():
+        # 1. Get the full covariance matrix (Kernel + Noise) at training points and the mean function
+        model_output = model(train_X)
+        likelihood_output = model.likelihood(model_output)
+        
+        K_total = likelihood_output.covariance_matrix + tikhonov_reg
+        mean_func = model.mean_module(train_X).squeeze()
+
+        # 2. Invert the matrix   
+        K_inv = torch.linalg.inv(K_total)
+        # K_inv = torch.linalg.pinv(K_total, atol=1e-3)  # Use pseudo-inverse for numerical stability
+
+        
+        # 3. Compute Alpha (Weight vector) = K_inv * y
+        y_flat = train_Y.squeeze() - mean_func  # Center y by subtracting mean function
+        alpha = K_inv @ y_flat
+        
+        # 4. Extract the diagonal of the inverse 
+        diag_inv = torch.diagonal(K_inv)
+
+        loo_error = y_flat - (alpha / diag_inv)
+    
+        #    Variance = 1 / Diagonal
+        loo_vars = 1.0 / diag_inv
+        
+        # 6. Calculate Metrics (RMSE)
+        residuals = y_flat - loo_error
+        mse = torch.mean(residuals.pow(2))
+        rmse = torch.sqrt(mse)
+        
+        # Compute PRESS (Predicted Residual Sum of Squares) and TSS (Total Sum of Squares)
+        # $$\text{PRESS} = \sum_{i=1}^N (y_i - \mu_{-i})^2 = \sum_{i=1}^N \left( \frac{\alpha_i}{[K^{-1}]_{ii}} \right)^2$$
+        # $$\text{TSS} = \sum_{i=1}^N (y_i - \bar{y})^2$$
+        press = torch.sum((alpha / diag_inv).pow(2))
+        # tss = torch.sum((y_flat - torch.mean(y_flat)).pow(2))
+        tss = torch.sum((train_Y - torch.mean(train_Y)).pow(2))
+        q2 = 1 - (press / tss)
+
+
+        loo_predictions = loo_error + mean_func
+
+
+        if debug:
+            print(f"LOO-CV RMSE: {rmse.item():.4f}")
+            print(f"LOO-CV Q^2 metric: {q2.item():.4f}")    
+
+        return {
+            "rmse": rmse.item(),
+            "q2": q2.item(),
+            "predictions": loo_predictions.cpu(),
+            "vars": loo_vars.cpu(),
+        }
+    
+        
+
+
+def print_kernel_diagnostics(model, reporter=print):
     """
     Print diagnostic information about kernel components and their learned variances.
     
@@ -388,9 +242,9 @@ def print_kernel_diagnostics(model):
     """
     import gpytorch
     
-    print("\n" + "="*60)
-    print(f"{'KERNEL TYPE':<30} | {'VARIANCE (Outputscale)':<25}")
-    print("="*60)
+    reporter("="*60)
+    reporter(f"{'KERNEL TYPE':<30} | {'VARIANCE (Outputscale)':<25}")
+    reporter("="*60)
     
     # Get the list of additive components
     if hasattr(model.covar_module, 'kernels'):
@@ -435,6 +289,6 @@ def print_kernel_diagnostics(model):
         elif isinstance(base, gpytorch.kernels.MaternKernel):
             name = "LOCAL: Texture (Matern)"
             
-        print(f"{name:<30} | {variance:<25}")
+        reporter(f"{name:<30} | {variance:<25}")
     
-    print("="*60 + "\n")
+    reporter("="*60)
