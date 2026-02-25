@@ -6,30 +6,39 @@ import io
 from aiida.orm import Dict, Code, KpointsData, load_node, JsonableData
 from aiida.engine import WorkChain, run
 from aiida.orm import Dict, List, Int, Float, Str
-from aiida.engine import calcfunction
+from aiida.engine import calcfunction, Process
 
 from .proposal_modes import propose_random_constraints, propose_random_so_n_constraints
+from .proposal_modes import propose_gaussian_process_constraints
 from lordcapulet.data_structures import OccupationMatrixData, OccupationMatrixAiidaData, extract_occupations_from_calc, filter_atoms_by_species
 
 
-def redirect_print_report(func, *args, **kwargs):
-    buf = io.StringIO()
-    with contextlib.redirect_stdout(buf):
-        result = func(*args, **kwargs)
-    output = buf.getvalue()
-    return result, output
+# This calcfunction must be reworked to accept also a list of calculations pks
+# in addition to the occupation_matrix_pk list
+
 
 @calcfunction
 def aiida_propose_occ_matrices_from_results(
-    pk_list, N=8, debug=False, mode='random', *, reporter_type=None, tm_atoms=None, **kwargs):
+    occ_matr_pks,
+    calc_pks,
+    N=8,
+    debug=False,
+    mode='random',*,
+    reporter_type='aiida_process',
+    tm_atoms=None, **kwargs):
+
     """
     AiiDA calcfunction that takes a list of PKs
     and returns a list of PKs of Dict nodes that are themselves stored
     and contain the occupation matrices. 
 
     This function wraps `propose_new_constraints` to create the Dict nodes.
+
+    Importantly: ALL THE AIIDA STUFF IS HANDLED HERE.
+    The internal function `propose_new_constraints` should not receive any
+    AiiDA specific logic and/or types.
     
-    :param pk_list: List of PKs to load the occupation matrices from a AFMScanWorkChain or ConstrainedScanWorkChain.
+    :param occ_matr_pks: List of PKs to load the occupation matrices from a AFMScanWorkChain or ConstrainedScanWorkChain.
     :param N: Int, number of dictionaries to return.
     :param debug: Bool, whether to print debug information.
     :param mode: Mode for selecting the dictionaries, e.g., 'random' or 'read'.
@@ -44,15 +53,22 @@ def aiida_propose_occ_matrices_from_results(
     The print statements will be captured in the AiiDA report log.
     """
 
-    if reporter_type == 'print':
+    if reporter_type == None:
         def reporter(msg):
             print(msg)
-    else:
-        reporter = None
+    elif reporter_type == 'aiida_process':
+        process  = Process.current()
+        def reporter(msg):
+            process.logger.report(msg)
+    elif reporter_type == 'aiida+print':
+        process  = Process.current()
+        def reporter(msg):
+            process.logger.report(msg)
+            print(msg)
 
     # load the nodes from the PKs and convert to unified format
     occ_matrices = []
-    for pk in pk_list.get_list():
+    for pk in occ_matr_pks.get_list():
         node = load_node(pk)
         
         # Handle JsonableData nodes containing OccupationMatrixData (preferred)
@@ -60,7 +76,9 @@ def aiida_propose_occ_matrices_from_results(
             # This is a JsonableData node containing our OccupationMatrixData
             occupation_matrix_data = node.obj
             occ_matrices.append(occupation_matrix_data)
-            print(f"Loaded occupation matrix from JsonableData node with PK {pk}")
+
+            if debug and reporter is not None:
+                reporter(f"Loaded occupation matrix from JsonableData node with PK {pk}")
         
         # Legacy support for saved matrix as Dict
         elif node.__class__.__name__ == "Dict":
@@ -68,7 +86,8 @@ def aiida_propose_occ_matrices_from_results(
             occupation_matrix_data = OccupationMatrixData.from_legacy_dict(legacy_dict)
             occ_matrices.append(occupation_matrix_data)
             # print a deprecated warning
-            print(f"Warning: Loaded occupation matrix from Dict node with PK {pk}. This is deprecated, please use OccupationMatrixAiidaData.")
+            if debug and reporter is not None:
+                reporter(f"Warning: Loaded occupation matrix from Dict node with PK {pk}. This is deprecated, please use OccupationMatrixAiidaData.")
         
         # Handle calculation nodes directly (for backward compatibility)
         elif hasattr(node, 'process_type') and ('aiida.calculations:quantumespresso.pw' in node.process_type or 'aiida.calculations:lordcapulet.constrained_pw' in node.process_type):
@@ -76,7 +95,8 @@ def aiida_propose_occ_matrices_from_results(
             try:
                 occupation_matrix_data = extract_occupations_from_calc(node)
                 occ_matrices.append(occupation_matrix_data)
-                print(f"Warning: Extracted occupation matrix directly from CalcJobNode with PK {pk}. Consider using workchain outputs instead.")
+                if debug and reporter is not None:
+                    reporter(f"Warning: Extracted occupation matrix directly from CalcJobNode with PK {pk}. Consider using workchain outputs instead.")
             except Exception as e:
                 raise ValueError(f"CalcJobNode with PK {pk}, error in parsing occupation_matrix: {e}")
         
@@ -91,6 +111,7 @@ def aiida_propose_occ_matrices_from_results(
     # This is necessary because propose_new_constraints expects standard Python types,
     # but AiiDA calcfunctions receive AiiDA node types (Dict, List, Int, Float, Str)
     kwargs_internal = {}
+    
     for key, value in kwargs.items():
         # Handle AiiDA Dict and List nodes by extracting their content
         if isinstance(value, (Dict, List)):
@@ -106,8 +127,17 @@ def aiida_propose_occ_matrices_from_results(
                            f"Only Dict, List, Int, Float, and Str nodes are supported.")
     # check if this ran in the debug mode
     if debug and reporter is not None:
-        reporter(f"Loaded {len(occ_matrices)} occupation matrices from nodes with PKs: {pk_list.get_list()}")
+        reporter(f"Loaded {len(occ_matrices)} occupation matrices from nodes with PKs: {occ_matr_pks.get_list()}")
         reporter(f"Using proposal mode: {mode.value} with N = {N.value} samples per generation")
+
+
+    # if the mode is 'gp' or 'gaussian_process' we need to
+    # also pass the total energies from the calculation pks
+
+    if mode.value in ['gp', 'gaussian_process']:
+        energies = [ load_node(pk).outputs.output_parameters.get_dict().get('energy') for pk in calc_pks.get_list() ]
+
+        kwargs_internal['energies'] = energies
 
 
 
@@ -120,25 +150,20 @@ def aiida_propose_occ_matrices_from_results(
             filtered_matrices.append(filtered_data)
         occ_matrices = filtered_matrices
 
-    if debug.value:
-        print(f"Loaded {len(occ_matrices)} OccupationMatrixData objects")
+    if debug:
+        reporter(f"Loaded {len(occ_matrices)} OccupationMatrixData objects")
         for i, occ_data in enumerate(occ_matrices):
-            print(f"  Matrix {i+1}: {len(occ_data)} atoms, species: {occ_data.get_atom_species()}")
+            reporter(f"  Matrix {i+1}: {len(occ_data)} atoms, species: {occ_data.get_atom_species()}")
 
     # Generate proposals using OccupationMatrixData directly (no conversion to legacy format)
-    proposals, to_report = redirect_print_report(
-                                    propose_new_constraints,
+    proposals = propose_new_constraints(
                                     occ_matr_list=occ_matrices,
                                     N=N.value,
                                     debug=debug.value,
                                     mode=mode.value,
+                                    reporter=reporter,
                                     **kwargs_internal
                                     )
-
-    # this does not work as it should, needs refactoring
-
-    # if self is not None:
-    #     self.report(to_report)
 
     # Store proposals as JsonableData nodes
     # Proposals are already OccupationMatrixData objects with metadata preserved
@@ -153,7 +178,7 @@ def aiida_propose_occ_matrices_from_results(
     return List(list=[node.pk for node in dict_nodes])
 
 
-def propose_new_constraints(occ_matr_list, N, mode='random', debug=True, **kwargs):
+def propose_new_constraints(occ_matr_list, N, mode='random', debug=True, reporter=None, **kwargs):
     """
     Generate N new occupation matrix proposals from existing data.
     
@@ -161,11 +186,16 @@ def propose_new_constraints(occ_matr_list, N, mode='random', debug=True, **kwarg
     
     :param occ_matr_list: List of OccupationMatrixData objects to use as reference
     :param N: Number of proposals to generate
-    :param mode: Proposal generation mode ('random', 'random_so_n', or 'read')
+    :param mode: Proposal generation mode ('random', 'random_so_n', 'gaussian_process', or 'read')
     :param debug: Whether to print debug information
+    :param reporter: Optional callable for logging (if None, uses print)
     :param kwargs: Additional mode-specific parameters
     :return: List of N OccupationMatrixData objects (proposals)
     """
+    # Setup reporter
+    if reporter is None:
+        reporter = print
+    
     if N < 1:
         raise ValueError("N must be greater than or equal to 1")
     
@@ -177,11 +207,11 @@ def propose_new_constraints(occ_matr_list, N, mode='random', debug=True, **kwarg
     nspin = 2  # up and down spin
 
     if debug:
-        print(f"Number of atoms: {natoms}")
-        print(f"Number of spins: {nspin}")
-        print(f"Number of orbitals: {norbitals}")
-        print(f"Atom labels: {first_occ_data.get_atom_labels()}")
-        print(f"Atom species: {first_occ_data.get_atom_species()}")
+        reporter(f"Number of atoms: {natoms}")
+        reporter(f"Number of spins: {nspin}")
+        reporter(f"Number of orbitals: {norbitals}")
+        reporter(f"Atom labels: {first_occ_data.get_atom_labels()}")
+        reporter(f"Atom species: {first_occ_data.get_atom_species()}")
 
     # implement case switch for mode
     match mode:
@@ -192,37 +222,55 @@ def propose_new_constraints(occ_matr_list, N, mode='random', debug=True, **kwarg
         case 'random_so_n':
             proposals = propose_random_so_n_constraints(occ_matr_list, natoms, N, debug=debug, **kwargs)
 
-        case 'read':
-            # check if there is readfile in kwargs
-            if 'readfile' not in kwargs:
-                raise ValueError("readfile must be provided in kwargs for read mode")
-            readfile = kwargs['readfile']
-            # read the json file
-            with open(readfile, 'r') as f:
-                loaded_data = json.load(f)
-            # assert that the loaded list is longer than N
-            if len(loaded_data) < N:
-                raise ValueError(f"Loaded data has only {len(loaded_data)} dictionaries, but N is {N}")
-
-            # now loaded_data[iteration]['occupation_numbers'][iatom][ispin] is a norbital x norbital matrix
+        case 'gaussian_process' | 'gp':
+            # Pop energies from kwargs (required for GP mode)
+            energies = kwargs.pop('energies', None)
+            if energies is None:
+                raise ValueError("Energies must be provided for Gaussian Process proposal mode")
+            
+            gp_config = kwargs.pop('gp_config', None)
 
 
-            #create now a list of dictionaries
-            target_matrix_np = np.zeros((natoms, nspin, norbitals, norbitals))
-
-            proposals = []
-            for iteration in range(0, N):
-                proposal = {}
-                for iatom in range(natoms):
-                    for ispin in range(nspin):
-                        target_matrix_np[iatom, ispin] = \
-                            np.array(loaded_data[iteration]['occupation_numbers'][iatom][ispin])
-                proposal['matrix'] = target_matrix_np.tolist()
-                proposals.append(proposal)
             if debug:
-                print(f"Reading {N} dictionaries from file")
+                reporter(f"Energies provided: {energies}")
+                reporter(f"Remaining kwargs keys: {list(kwargs.keys())}")
 
-        
-        
+
+            # test for the existence of current generation in kwargs
+            current_generation = kwargs.pop('current_generation', None)
+            
+            assert current_generation is not None, "current_generation must be provided in kwargs for GP mode"
+
+            if current_generation == 0:
+                # this would need changing if one wants to have a different
+                # number of initial random proposals, needs changing also
+                # in the workchain 
+                N_initial_random = kwargs.get('N_initial_random', N)
+
+                reporter(f"Current generation is {current_generation}, proposing {N_initial_random} random constraints for initial GP training")
+                proposals = propose_random_constraints(occ_matr_list, natoms,  N_initial_random, debug=debug, **kwargs)
+            else:
+
+                reporter(f"Current generation is {current_generation}, proposing {N} constraints using Gaussian Process")
+                # try to generate proposals using GP, if it fails, report the error  and traceback
+                # and fall back to random proposals
+
+                try:
+                    proposals = propose_gaussian_process_constraints(
+                        occ_matr_list, energies, natoms, N, gp_config=gp_config,
+                        debug=debug, reporter=reporter, **kwargs
+                    )
+                except Exception as e:
+                    reporter(f"Error in Gaussian Process proposal generation: {e}")
+                    import traceback
+                    traceback_str = traceback.format_exc()
+                    reporter(traceback_str)
+                    reporter("Falling back to random constraint proposals")
+                    proposals = propose_random_constraints(occ_matr_list, natoms,  N, debug=debug, **kwargs)
+
+        case 'read':
+            # raise implmementation error for now
+            raise NotImplementedError("The 'read' mode needs to be implemented")
+
     
     return proposals

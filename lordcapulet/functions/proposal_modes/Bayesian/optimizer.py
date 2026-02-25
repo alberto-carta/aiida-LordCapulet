@@ -9,6 +9,7 @@ methods with easy extensibility for new methods (e.g., particle swarm).
 import torch
 import torch.optim as optim
 from botorch.optim.initializers import gen_batch_initial_conditions
+import numpy as np
 
 
 def optimize_acquisition(acqf, bounds, optimization_config, initial_guess=None):
@@ -204,3 +205,8 @@ def create_bounds_tensor(databank, atom_ids, device):
     bounds = torch.stack((bounds[:, 0], bounds[:, 1]), dim=0)
     
     return bounds
+
+## initialization routines
+
+
+

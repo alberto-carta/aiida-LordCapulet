@@ -23,7 +23,24 @@ classifiers = [
 dependencies = [
     "aiida-core>=2.0.0",
     "aiida-quantumespresso>=4.0.0",
-    "numpy",
+    "numpy>=1.26.0",
+    "torch>=2.0.0",
+    "botorch>=0.16.0",
+    "gpytorch>=1.14.0",
+    "scipy>=1.13.0",
+    "pandas>=2.0.0",
+    "matplotlib>=3.9.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4.0",
+    "pytest-datadir>=1.8.0",
+    "pytest-regressions>=2.8.0",
+    "pytest-anyio>=0.4.0",
+    "jaxtyping>=0.3.0",
+    "black>=24.0.0",
+    "isort>=5.0.0",
 ]
 
 [project.urls]
@@ -53,6 +70,10 @@ profile = "black"
 line_length = 88
 
 [tool.pytest.ini_options]
-minversion = "6.0"
-addopts = "-ra -q"
+minversion = "7.4"
+addopts = "--tb=short -ra"
 testpaths = ["tests"]
+console_output_style = "count"
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+]
