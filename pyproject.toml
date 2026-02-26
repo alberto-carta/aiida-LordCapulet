@@ -41,6 +41,8 @@ dev = [
     "jaxtyping>=0.3.0",
     "black>=24.0.0",
     "isort>=5.0.0",
+    "pgtest~=1.3",
+    "aiida-pseudo>=1.0.0",
 ]
 
 [project.urls]
@@ -57,11 +59,8 @@ Issues = "https://github.com/alberto-carta/aiida-LordCapulet/issues"
 [project.entry-points."aiida.workflows"]
 "lordcapulet.afm_scan" = "lordcapulet.workflows.afm_scan:AFMScanWorkChain"
 "lordcapulet.constrained_scan" = "lordcapulet.workflows.constrained_scan:ConstrainedScanWorkChain"
+# needs entrypoint for Global scan 
 
-[tool.setuptools.packages.find]
-include = ["lordcapulet*"]
-
-[tool.black]
 line-length = 88
 target-version = ['py38']
 
