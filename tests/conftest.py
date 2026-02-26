@@ -21,6 +21,17 @@ import numpy as np
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # Enable AiiDA's built-in pytest plugin: ephemeral profile, aiida_localhost, aiida_code_installed
+# aiida.tools.pytest_fixtures provides three ready-made fixtures that all
+# AiiDA-aware tests rely on:
+#   - aiida_profile          – an isolated, ephemeral AiiDA profile backed
+#                              by a temporary PostgreSQL database (pgtest).
+#                              Everything stored during a test is thrown away
+#                              when the session ends.
+#   - aiida_localhost        – a Computer named 'localhost' registered in the
+#                              ephemeral profile.
+#   - aiida_code_installed   – factory for InstalledCode nodes attached to
+#                              aiida_localhost.
+# All custom fixtures below build on top of these.
 pytest_plugins = ['aiida.tools.pytest_fixtures']
 
 
@@ -104,7 +115,13 @@ def fixture_sandbox():
 
 @pytest.fixture
 def fixture_localhost(aiida_localhost):
-    """Return a localhost ``Computer`` with 1 MPI proc."""
+    """Thin wrapper around ``aiida_localhost`` that sets the default MPI count.
+
+    ``aiida_localhost`` is provided by ``aiida.tools.pytest_fixtures`` and
+    represents a Computer node registered in the ephemeral AiiDA profile.
+    The MPI count is fixed to 1 so builder validation does not complain about
+    missing resource specifications.
+    """
     localhost = aiida_localhost
     localhost.set_default_mpiprocs_per_machine(1)
     return localhost
@@ -112,7 +129,19 @@ def fixture_localhost(aiida_localhost):
 
 @pytest.fixture
 def fixture_code(aiida_code_installed):
-    """Return an ``InstalledCode`` instance for the given entry point on localhost."""
+    """Factory fixture: call ``fixture_code(entry_point)`` to get a Code node.
+
+    ``aiida_code_installed`` (from ``aiida.tools.pytest_fixtures``) creates a
+    *fake* InstalledCode attached to ``aiida_localhost``.  The code executable
+    does not actually exist on disk – that is fine because we never run the
+    scheduler in these tests; the Code node is only needed to satisfy AiiDA's
+    input validation when building processes.
+
+    Usage::
+
+        code = fixture_code('quantumespresso.pw')
+        code = fixture_code('lordcapulet.constrained_pw')
+    """
 
     def _fixture_code(entry_point_name):
         return aiida_code_installed(
@@ -125,9 +154,11 @@ def fixture_code(aiida_code_installed):
 
 @pytest.fixture
 def generate_calc_job():
-    """Fixture to instantiate a CalcJob and call ``prepare_for_submission``.
+    """Instantiate a CalcJob and call ``prepare_for_submission`` on it.
 
-    Returns the ``CalcInfo`` object without ever running the calculation.
+    This lets tests inspect what the plugin *would* write to disk (input
+    files, retrieve list, etc.) without actually running any scheduler job.
+    Returns the ``CalcInfo`` namedtuple produced by ``prepare_for_submission``.
     """
 
     def _generate_calc_job(folder, entry_point_name, inputs=None):
@@ -148,9 +179,15 @@ def generate_calc_job():
 
 @pytest.fixture
 def generate_calc_job_node(fixture_localhost):
-    """Fixture to generate a mock ``CalcJobNode`` for testing tools/parsers.
+    """Factory fixture: build a stored ``CalcJobNode`` with linked inputs.
 
-    Creates a node with correctly linked inputs and optional retrieved ``FolderData``.
+    Used by parser tests that need a realistic node graph without running
+    any real scheduler job.  The node is stored in the ephemeral DB so
+    parsers can call ``load_node`` on it if needed.
+
+    Usage::
+
+        node = generate_calc_job_node('quantumespresso.pw', inputs={...})
     """
 
     def flatten_inputs(inputs, prefix=''):
@@ -211,7 +248,23 @@ def generate_calc_job_node(fixture_localhost):
 
 @pytest.fixture
 def generate_workchain():
-    """Generate an instance of a ``WorkChain`` without running it through the engine."""
+    """Factory fixture: create a WorkChain instance **without** submitting it.
+
+    ``instantiate_process`` validates inputs against the spec and sets up the
+    process context (``process.ctx``) exactly as the engine would, but the
+    workchain never enters the event loop.  This lets tests call individual
+    step methods directly (e.g. ``process.prepare_configs()``) and inspect
+    or inject ``ctx`` freely.
+
+    Accepts either an entry-point string or a class directly so tests can work
+    with workchains that are not registered as AiiDA entry points (e.g.
+    ``GlobalConstrainedSearchWorkChain``).
+
+    Usage::
+
+        process = generate_workchain('lordcapulet.afm_scan', inputs)
+        process = generate_workchain(GlobalConstrainedSearchWorkChain, inputs)
+    """
 
     def _generate_workchain(entry_point, inputs):
         from aiida.engine.utils import instantiate_process
@@ -299,7 +352,20 @@ def generate_upf_data():
 
 @pytest.fixture(scope='session')
 def pseudo_family(generate_upf_data):
-    """Create the SSSP pseudo potential family used by lordcapulet workflows."""
+    """Session-scoped SSSP/1.3/PBEsol/efficiency pseudo-potential family.
+
+    Both ``AFMScanWorkChain`` and ``ConstrainedScanWorkChain`` hard-code a
+    ``load_group('SSSP/1.3/PBEsol/efficiency')`` call inside ``run_all``.
+    This fixture pre-populates the ephemeral profile with a family of that
+    exact label so those lookups succeed at test time.
+
+    The UPF files are minimal stubs (just an XML header), which is enough for
+    ``get_pseudos()`` to return valid ``UpfData`` nodes.  No real DFT is ever
+    performed, so stub files are sufficient.
+
+    Scoped to ``session`` so the family is created once and reused across all
+    tests – building it for every test would be slow.
+    """
     from aiida.common.constants import elements
     from aiida_pseudo.data.pseudo.upf import UpfData
     from aiida_pseudo.groups.family import SsspFamily
@@ -340,8 +406,59 @@ def pseudo_family(generate_upf_data):
 
 
 @pytest.fixture
+def make_finished_calc_node(fixture_localhost):
+    """Factory fixture: create a stored ``CalcJobNode`` that looks finished.
+
+    ``gather_results`` in both ``AFMScanWorkChain`` and
+    ``ConstrainedScanWorkChain`` iterates over ``ctx.calcs`` and, for each
+    node, calls ``load_node(calc.pk)`` and then checks
+    ``fresh_calc.is_finished`` and ``fresh_calc.exit_status``.  To exercise
+    this logic without running any real calculation, we need a node that:
+
+    1. Is persisted in the DB (so ``load_node`` succeeds).
+    2. Reports ``is_finished == True`` and the desired ``exit_status``.
+
+    AiiDA derives both properties from the ``process_state`` and
+    ``exit_status`` node attributes set by the plumpy engine.  We write them
+    directly here to fake a finished state.
+
+    Usage::
+
+        calc_ok   = make_finished_calc_node()           # exit_status=0
+        calc_fail = make_finished_calc_node(exit_status=2)
+    """
+    from aiida import orm
+
+    def _make_node(exit_status=0):
+        node = orm.CalcJobNode(computer=fixture_localhost)
+        node.set_option('resources', {'num_machines': 1, 'num_mpiprocs_per_machine': 1})
+        # Set the same attributes that the plumpy engine writes when a job
+        # finishes.  ``node.is_finished`` returns True when process_state is
+        # 'finished'; ``node.exit_status`` reads the 'exit_status' attribute.
+        node.base.attributes.set('process_state', 'finished')
+        node.base.attributes.set('exit_status', exit_status)
+        node.store()  # must be stored so load_node(node.pk) works later
+        return node
+
+    return _make_node
+
+
+@pytest.fixture
 def generate_inputs_constrained_pw(fixture_code, generate_structure, generate_kpoints_mesh, pseudo_family):
-    """Assemble valid inputs for ``ConstrainedPWCalculation``."""
+    """Factory fixture: build a complete inputs dict for ``ConstrainedPWCalculation``.
+
+    The deep-copy of ``occ_data`` before building ``OccupationMatrixData`` is
+    intentional: ``JsonableData.__init__`` calls ``as_dict()`` on the object,
+    which stores a reference to the internal ``_data`` dict, and then adds
+    ``@class`` / ``@module`` keys to it.  Those mutations would corrupt the
+    original ``OccupationMatrixData._data``, causing later ``from_dict``
+    calls to fail.
+
+    The ``del target_matrix._obj`` line forces the next ``.obj`` access to
+    re-run ``from_dict`` (which pops those keys), mimicking the round-trip
+    that happens when the node is loaded from the DB.  Without this the node
+    behaves differently depending on whether it was just created or loaded.
+    """
 
     def _generate_inputs(structure_id='feo', with_jsonable=True):
         import copy
