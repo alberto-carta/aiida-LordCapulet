@@ -1,12 +1,9 @@
 #%%
 import aiida
-from aiida.orm import Code, Dict, StructureData, KpointsData, List, Int, Str, Bool, Float, load_node
+from aiida.orm import load_node
 from aiida.engine import submit
 from lordcapulet.workflows import GlobalConstrainedSearchWorkChain
-from lordcapulet.utils.preprocessing.submission import tag_and_list_atoms, get_default_manifolds, get_dimensions
-# import HubbardUtils to rearrange atoms
-from aiida_quantumespresso.utils.hubbard import HubbardUtils
-from aiida_quantumespresso.data.hubbard_structure import HubbardStructureData
+from lordcapulet.utils import prepare_tm_info, prepare_hubbard_structure
 from ase.io import read
 
 # Load AiiDA profile
@@ -17,125 +14,55 @@ atoms = read('../FeO.scf.in', format='espresso-in')  # Adjust path as needed
 
 #%%
 # tag transition metal atoms and get their manifolds and dimensions
-tm_atoms = tag_and_list_atoms(atoms, table={'Fe'})
-tm_manifolds = get_default_manifolds(tm_atoms)
-tm_dimensions = get_dimensions(tm_manifolds) 
-
-total_dimensions = sum(tm_dimensions)
+tm_atoms, tm_manifolds, tm_dimensions = prepare_tm_info(atoms, table={'Fe'})
 
 # print tags
 print("Tagged transition atoms:", tm_atoms)
 print("Corresponding manifolds:", tm_manifolds)
 print("Corresponding dimensions:", tm_dimensions)
-print("Total dimensions:", total_dimensions)
+print("Total dimensions:", sum(tm_dimensions))
 
-structure = StructureData(ase=atoms)
-
-Uval = 5 # Hubbard U
-hubbard_structure = HubbardStructureData.from_structure(structure)
-
-
-for itm, tm_atom in enumerate(tm_atoms):
-    hubbard_structure.initialize_onsites_hubbard(
-        atom_name=tm_atom,
-        atom_manifold=tm_manifolds[itm],
-        value=Uval  )  # 
-
-# make sure that the Hubbard atoms are always before the rest of the atoms in the structure
-hutils = HubbardUtils(hubbard_structure)
-hutils.reorder_atoms()
-hubbard_structure = hutils._hubbard_structure
+# u_values can be a single float (same U for all TM sites) or a per-atom
+# list with one entry per site, e.g. u_values=[5.0, 4.0]
+hubbard_structure = prepare_hubbard_structure(
+    atoms, tm_atoms, tm_manifolds, u_values=5.0
+)
 
 code = aiida.orm.load_code('pwx_const@daint-general')  # Adjust to your code
 
-# Set up k-pointsSearchWorkChain.
-kpoints = KpointsData()
-kpoints.set_kpoints_mesh([3, 3, 3])  # Adjust as needed
-
-# Define DFT parameters
-parameters = Dict(dict={
-    'CONTROL': {
-        'calculation': 'scf',
-        'restart_mode': 'from_scratch',
-        'verbosity': 'high',
-    },
-    'SYSTEM': {
-        'ecutwfc': 40.0,    # Adjust as needed
-        'ecutrho': 480.0,   # Adjust as needed
-        'occupations': 'smearing',
-        'smearing': 'cold',
-        'degauss': 0.05,
-        'nspin': 2,
-        # Add other system parameters as needed
-    },
-    'ELECTRONS': {
-        'conv_thr': 1.0e-3,
-        'mixing_beta': 0.3,
-        'electron_maxstep': 500,
-        # 'mixing_mode': 'local-TF',
-    },
-})
-
-
-
-
 #%%
-
-oscdft_card = Dict(dict={
-    'oscdft_type': 2,
-    'n_oscdft': total_dimensions,
-    'constraint_strength': 1.0,
-    'constraint_conv_thr': 0.005,
-    'constraint_maxstep': 200,
-    'constraint_mixing_beta': 0.4,
-})
-
-# Global search parameters
-Nmax = 20   # Total number of constrained calculations to perform
-N = 4      # Number of proposals per generation
-
-inputs = {
-    # AFM search inputs
-    'afm': {
-        'structure': hubbard_structure,  # or hubbard_structure
-        'parameters': parameters,
-        'kpoints': kpoints,
-        'code': code,
-        'tm_atoms': List(list=tm_atoms),
-        'magnitude': Float(0.5),  # Magnetization magnitude for AFM
-        'walltime_hours': Float(1.0),  # AFM calculations walltime (1 hour)
+# Build and submit using protocol defaults.
+# Use `overrides` to adjust DFT parameters or global search settings:
+#   overrides={
+#       'Nmax': 30, 'N': 8,
+#       'afm':        {'kpoints_mesh': [4, 4, 4], 'walltime_hours': 2.0},
+#       'constrained': {'walltime_hours': 3.0},
+#   }
+builder = GlobalConstrainedSearchWorkChain.get_builder_from_protocol(
+    code=code,
+    structure=hubbard_structure,
+    tm_atoms=tm_atoms,
+    overrides={
+        'Nmax': 20,
+        'N': 4,
+        'proposal_mode': 'random_so_n',
+        'afm': {
+            'kpoints_mesh': [3, 3, 3],
+            'walltime_hours': 1.0,
+            'parameters': {'SYSTEM': {'ecutwfc': 40.0, 'ecutrho': 480.0, 'degauss': 0.05}},
+        },
+        'constrained': {
+            'kpoints_mesh': [3, 3, 3],
+            'walltime_hours': 1.0,
+            'parameters': {'SYSTEM': {'ecutwfc': 40.0, 'ecutrho': 480.0, 'degauss': 0.05}},
+        },
     },
-    
-    # Constrained scan inputs
-    'constrained': {
-        'structure': hubbard_structure,  # or hubbard_structure  
-        'parameters': parameters,
-        'kpoints': kpoints,
-        'code': code,
-        'tm_atoms': List(list=tm_atoms),
-        'oscdft_card': oscdft_card,
-        'walltime_hours': Float(1.0),  # Constrained calculations walltime (1 hour)
-    },
-    
-    # Global search parameters
-    'Nmax': Int(Nmax),
-    'N': Int(N),
-    
-    # Proposal function parameters
-    'proposal_mode': Str('random_so_n'),  # Use read mode to load from JSON file
-    'proposal_debug': Bool(True),
-    'proposal_holistic': Bool(False),  # Use Markovian approach by default
-    
-    # Provide the JSON file for read mode
-    'proposal_kwargs': Dict(dict={ 'randomize_oxidation': False,
-    }),
-}
+)
 
 # Submit the workchain
-workchain = submit(GlobalConstrainedSearchWorkChain, **inputs)
+workchain = submit(builder)
 
 print(f"Submitted GlobalConstrainedSearchWorkChain with PK: {workchain.pk}")
-print(f"This will perform up to {Nmax} constrained calculations in batches of {N}")
 print(f"Monitor progress with: verdi process status {workchain.pk}")
 
 # create a file and save information about the workchain for postprocessing
@@ -144,15 +71,7 @@ with open('feo_global_scan_info.txt', 'w') as f:
     f.write("="*40 + "\n")
     f.write(f"Workchain PK: {workchain.pk}\n")
     f.write(f"Material: FeO\n")
-    f.write(f"Total constrained calculations (Nmax): {Nmax}\n")
-    f.write(f"Proposals per generation (N): {N}\n")
-    f.write(f"Proposal mode: random_so_n\n")
-    f.write(f"Randomize oxidation states in proposals: {inputs['proposal_kwargs'].get('randomize_oxidation', False)}\n")
     f.write("="*40 + "\n")
-
-#%%
-
-GlobalConstrainedSearchWorkChain.get_builder()
 
 
 # %%

@@ -93,6 +93,134 @@ class GlobalConstrainedSearchWorkChain(WorkChain):
         spec.exit_code(402, 'ERROR_PROPOSAL_FAILED',
                       message='Matrix proposal step failed')
 
+    @classmethod
+    def get_builder_from_protocol(
+        cls,
+        code,
+        structure,
+        tm_atoms,
+        protocol: str = 'default',
+        overrides: dict | None = None,
+    ):
+        """Return a pre-populated builder for the global constrained search.
+
+        Protocol defaults are loaded from all three YAML files:
+        ``common.yaml`` + ``afm_scan.yaml`` for the AFM sub-workchain,
+        ``common.yaml`` + ``constrained_scan.yaml`` for the constrained scan,
+        and ``global_search.yaml`` for global parameters.
+
+        Args:
+            code: AiiDA :class:`~aiida.orm.Code` (or label string).  Pass a
+                dict ``{'afm': code1, 'constrained': code2}`` to use
+                different codes for each sub-workchain.
+            structure: input structure.
+            tm_atoms: list of tagged TM species strings returned by
+                :func:`~lordcapulet.utils.preprocessing.submission.tag_and_list_atoms`.
+            protocol: protocol name (default: ``'default'``).
+            overrides: optional dict.  Keys ``'afm'`` and ``'constrained'``
+                route overrides to the respective sub-protocol; all other
+                keys (``'Nmax'``, ``'N'``, ``'proposal_mode'``, …) override
+                the global search parameters.
+
+        Returns:
+            A populated :class:`~aiida.engine.ProcessBuilder`.
+        """
+        import yaml
+        from importlib_resources import files
+        import lordcapulet.workflows.protocols as protocols_pkg
+        from aiida.orm import load_code, KpointsData, Dict, List, Float, Str, Int, Bool
+        from lordcapulet.utils.preprocessing.submission import (
+            get_default_manifolds,
+            get_dimensions,
+        )
+        from lordcapulet.workflows.protocols.utils import recursive_merge
+
+        overrides = overrides or {}
+
+        # ── resolve code(s) ─────────────────────────────────────────────────
+        if isinstance(code, dict):
+            afm_code = load_code(code['afm']) if isinstance(code['afm'], str) else code['afm']
+            con_code = load_code(code['constrained']) if isinstance(code['constrained'], str) else code['constrained']
+        else:
+            if isinstance(code, str):
+                code = load_code(code)
+            afm_code = con_code = code
+
+        # ── load sub-protocol inputs ─────────────────────────────────────────
+        afm_inputs = AFMScanWorkChain.get_protocol_inputs(
+            protocol, overrides.get('afm')
+        )
+        con_inputs = ConstrainedScanWorkChain.get_protocol_inputs(
+            protocol, overrides.get('constrained')
+        )
+
+        # ── load global_search.yaml defaults ────────────────────────────────
+        global_path = files(protocols_pkg) / 'global_search.yaml'
+        with global_path.open() as fh:
+            global_data = yaml.safe_load(fh) or {}
+
+        proto_data = (global_data.get('protocols', {}).get(protocol) or {})
+        global_inputs = {k: v for k, v in global_data.items()
+                         if k not in {'protocols', 'default_protocol'}}
+        global_inputs = recursive_merge(
+            global_inputs,
+            {k: v for k, v in proto_data.items() if k != 'description'},
+        )
+        # User top-level overrides (not 'afm' / 'constrained' keys)
+        user_global = {k: v for k, v in overrides.items()
+                       if k not in ('afm', 'constrained')}
+        global_inputs = recursive_merge(global_inputs, user_global)
+
+        # ── compute n_oscdft from tm_atoms ───────────────────────────────────
+        manifolds = get_default_manifolds(tm_atoms)
+        n_oscdft = sum(get_dimensions(manifolds))
+
+        oscdft_dict = dict(con_inputs.get('oscdft_card', {}))
+        oscdft_dict['n_oscdft'] = n_oscdft
+
+        # ── build kpoints ────────────────────────────────────────────────────
+        # make_kpoints uses density-based auto-mesh by default, or a fixed mesh
+        # if the caller passed overrides={'afm': {'kpoints_mesh': [...]}}.
+        from lordcapulet.workflows.protocols.utils import make_kpoints
+        afm_kpoints = make_kpoints(afm_inputs, structure)
+        con_kpoints = make_kpoints(con_inputs, structure)
+
+        # ── populate builder ─────────────────────────────────────────────────
+        builder = cls.get_builder()
+
+        # AFM sub-workchain
+        builder.afm.code = afm_code
+        builder.afm.structure = structure
+        builder.afm.kpoints = afm_kpoints
+        builder.afm.parameters = Dict(dict=afm_inputs['parameters'])
+        builder.afm.tm_atoms = List(list=tm_atoms)
+        builder.afm.magnitude = Float(afm_inputs.get('magnitude', 0.5))
+        builder.afm.walltime_hours = Float(afm_inputs.get('walltime_hours', 2.0))
+        builder.afm.pseudo_family_string = Str(
+            afm_inputs.get('pseudo_family', 'SSSP/1.3/PBEsol/efficiency')
+        )
+
+        # Constrained sub-workchain (occupation_matrices_list excluded via expose_inputs)
+        builder.constrained.code = con_code
+        builder.constrained.structure = structure
+        builder.constrained.kpoints = con_kpoints
+        builder.constrained.parameters = Dict(dict=con_inputs['parameters'])
+        builder.constrained.tm_atoms = List(list=tm_atoms)
+        builder.constrained.oscdft_card = Dict(dict=oscdft_dict)
+        builder.constrained.walltime_hours = Float(con_inputs.get('walltime_hours', 2.0))
+        builder.constrained.pseudo_family_string = Str(
+            con_inputs.get('pseudo_family', 'SSSP/1.3/PBEsol/efficiency')
+        )
+
+        # Global search parameters
+        builder.Nmax = Int(global_inputs.get('Nmax', 20))
+        builder.N = Int(global_inputs.get('N', 4))
+        builder.proposal_mode = Str(global_inputs.get('proposal_mode', 'random_so_n'))
+        builder.proposal_debug = Bool(global_inputs.get('proposal_debug', False))
+        builder.proposal_holistic = Bool(global_inputs.get('proposal_holistic', False))
+
+        return builder
+
     def run_initial_afm_search(self):
         """
         Run the initial AFM search to get starting occupation matrices.

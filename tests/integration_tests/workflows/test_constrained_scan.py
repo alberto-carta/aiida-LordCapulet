@@ -182,7 +182,7 @@ class TestConstrainedScanPrepareCalculations:
 
 
 class TestConstrainedScanRunAll:
-    """Test the ``run_all`` step – submit count and builder configuration.
+    """Test the ``run_all`` step - submit count and builder configuration.
 
     Strategy
     --------
@@ -194,12 +194,12 @@ class TestConstrainedScanRunAll:
 
     The same three patches as in ``TestAFMScanRunAll`` are required:
 
-    * ``submit``     — replaced with a ``MagicMock`` / side-effect function
+    * ``submit``     - replaced with a ``MagicMock`` / side-effect function
                        to capture builders without launching a real job.
-    * ``append_``    — patched out because it rejects non-awaitable arguments
+    * ``append_``    - patched out because it rejects non-awaitable arguments
                        (i.e. ``MagicMock``) before ``to_context`` is called.
-    * ``to_context`` — patched out to avoid event-loop interactions.
-    * ``report``     — silenced to avoid node-logging errors.
+    * ``to_context`` - patched out to avoid event-loop interactions.
+    * ``report``     - silenced to avoid node-logging errors.
     """
 
     def _make_process(self, generate_workchain, generate_structure,
@@ -275,7 +275,7 @@ class TestConstrainedScanRunAll:
 
 
 class TestConstrainedScanGatherResults:
-    """Test the ``gather_results`` step – output lists, node extras, and failure handling.
+    """Test the ``gather_results`` step - output lists, node extras, and failure handling.
 
     Strategy
     --------
@@ -287,7 +287,7 @@ class TestConstrainedScanGatherResults:
 
     * ``patch('lordcapulet.workflows.constrained_scan.extract_occupations_from_calc')``
       replaces the QE output parser with a stub returning a minimal
-      ``OccupationMatrixData`` – no real output files needed.
+      ``OccupationMatrixData`` - no real output files needed.
 
     * ``patch.object(process, 'out', side_effect=capture)`` captures every
       ``self.out('key', node)`` call into a plain dict so we can assert on

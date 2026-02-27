@@ -12,24 +12,14 @@ per target and gathers the converged results.
 
 import numpy as np
 import aiida
-from aiida.orm import (
-    Dict, KpointsData, List, Float, load_group, JsonableData, load_node
-)
+from aiida.orm import Dict, List, Float, JsonableData, load_node
 from aiida.engine import submit
 from ase.io import read
 
-from aiida_quantumespresso.utils.hubbard import HubbardUtils
-from aiida_quantumespresso.data.hubbard_structure import HubbardStructureData
-from aiida.orm import StructureData
 
-from lordcapulet.workflows import ConstrainedScanWorkChain
 from lordcapulet.data_structures.occupation_matrix import OccupationMatrixData
 from lordcapulet.functions.proposal_modes.shared_functionality import apply_random_rotation
-from lordcapulet.utils.preprocessing.submission import (
-    tag_and_list_atoms,
-    get_default_manifolds,
-    get_dimensions,
-)
+from lordcapulet.utils import prepare_tm_info, prepare_hubbard_structure
 
 # ── Load AiiDA profile ──────────────────────────────────────────────────────
 aiida.load_profile()
@@ -38,31 +28,21 @@ aiida.load_profile()
 # ── Build the structure ─────────────────────────────────────────────────────
 atoms = read('../FeO.scf.in', format='espresso-in')
 
-tm_atoms = tag_and_list_atoms(atoms, table={'Fe'})   # ['Fe1', 'Fe2']
-tm_manifolds = get_default_manifolds(tm_atoms)        # ['3d', '3d']
-tm_dimensions = get_dimensions(tm_manifolds)          # [5, 5]
-total_dimensions = sum(tm_dimensions)                 # 10
+tm_atoms, tm_manifolds, tm_dimensions = prepare_tm_info(atoms, table={'Fe'})
 
 print("Tagged transition atoms:", tm_atoms)
 print("Corresponding manifolds:", tm_manifolds)
 print("Orbital dimensions:", tm_dimensions)
-print("Total OSCDFT dimensions:", total_dimensions)
+print("Total OSCDFT dimensions:", sum(tm_dimensions))
 
-structure = StructureData(ase=atoms)
-
-Uval = 5.0
-hubbard_structure = HubbardStructureData.from_structure(structure)
-for itm, tm_atom in enumerate(tm_atoms):
-    hubbard_structure.initialize_onsites_hubbard(
-        atom_name=tm_atom,
-        atom_manifold=tm_manifolds[itm],
-        value=Uval,
-    )
-hutils = HubbardUtils(hubbard_structure)
-hutils.reorder_atoms()
-hubbard_structure = hutils._hubbard_structure
+# u_values can be a single float (same U for all TM sites) or a per-atom
+# list with one entry per site, e.g. u_values=[5.0, 4.0]
+hubbard_structure = prepare_hubbard_structure(
+    atoms, tm_atoms, tm_manifolds, u_values=5.0
+)
 
 # ── Reference occupation matrices ───────────────────────────────────────────
+# This part here until XXXXX should not be automated and must be kept in the example
 # These come from the same QE output used in the single-calculation example.
 # We treat them as the "seed" and generate diverse proposals by rotating them.
 
@@ -123,62 +103,90 @@ for i in range(N_rotations):
     print(f"  Proposal {i+1}/{N_rotations}: stored OccupationMatrixAiidaData PK={node.pk}")
 
 print(f"\nStored {len(target_matrix_pks)} target matrices: {target_matrix_pks}")
-
-# ── Code and k-points ───────────────────────────────────────────────────────
+# XXXXX
 code = aiida.orm.load_code('pwx_const@daint-general')  # adjust to your installation
 
-kpoints = KpointsData()
-kpoints.set_kpoints_mesh([4, 4, 4])
+#%%
+# ── Option A: fully manual builder (no protocols) ────────────────────────────
+# Use this if you want explicit control over every single input without relying
+# on the YAML defaults.  n_oscdft must equal the total number of orbital
+# channels across all TM sites (sum of tm_dimensions, which is 10 for 2x3d).
+# Uncomment the block below and comment out Option B to use it.
+#
+# from aiida.orm import Dict, KpointsData, List, Float, Str
+#
+# kpoints = KpointsData()
+# kpoints.set_kpoints_mesh([4, 4, 4])
+#
+# parameters = Dict(dict={
+#     'CONTROL': {
+#         'calculation': 'scf',
+#         'restart_mode': 'from_scratch',
+#         'verbosity': 'high',
+#     },
+#     'SYSTEM': {
+#         'ecutwfc': 60.0,
+#         'ecutrho': 480.0,
+#         'occupations': 'smearing',
+#         'smearing': 'cold',
+#         'degauss': 0.01,
+#         'nspin': 2,
+#     },
+#     'ELECTRONS': {
+#         'conv_thr': 1.0e-8,
+#         'mixing_beta': 0.1,
+#         'electron_maxstep': 500,
+#         'mixing_mode': 'local-TF',
+#     },
+# })
+#
+# oscdft_card = Dict(dict={
+#     'oscdft_type': 2,
+#     'n_oscdft': sum(tm_dimensions),   # 10 for 2 Fe 3d sites
+#     'constraint_strength': 1.0,
+#     'constraint_conv_thr': 0.005,
+#     'constraint_maxstep': 200,
+#     'constraint_mixing_beta': 0.4,
+# })
+#
+# builder = ConstrainedScanWorkChain.get_builder()
+# builder.code = code
+# builder.structure = hubbard_structure
+# builder.kpoints = kpoints
+# builder.parameters = parameters
+# builder.tm_atoms = List(list=tm_atoms)
+# builder.oscdft_card = oscdft_card
+# builder.occupation_matrices_list = List(list=target_matrix_pks)
+# builder.walltime_hours = Float(2.0)
+# builder.pseudo_family_string = Str('SSSP/1.3/PBEsol/efficiency')
 
-# ── DFT parameters ──────────────────────────────────────────────────────────
-parameters = Dict(dict={
-    'CONTROL': {
-        'calculation': 'scf',
-        'restart_mode': 'from_scratch',
-        'verbosity': 'high',
+# ── Option B: protocol-based builder (recommended) ───────────────────────────
+# All DFT parameters, k-points, pseudo family, and OSCDFT defaults are loaded
+# from the protocol YAMLs.  n_oscdft is computed automatically from tm_atoms.
+# Pass `overrides` as a nested dict to change only what you need.
+#
+# Available overrides (non-exhaustive):
+#   'kpoints_distance'              - spacing in 1/Å (default 0.4)
+#   'kpoints_mesh'                  - explicit [nx,ny,nz] (bypasses density logic)
+#   'walltime_hours'                - hours per calculation (default 2.0)
+#   'pseudo_family'                 - aiida-pseudo group label
+#   'parameters'                    - nested QE namelist overrides
+#   'oscdft_card'                   - override individual OSCDFT parameters
+#                                     (n_oscdft is always set automatically)
+builder = ConstrainedScanWorkChain.get_builder_from_protocol(
+    code=code,
+    structure=hubbard_structure,
+    tm_atoms=tm_atoms,
+    occupation_matrices_list=target_matrix_pks,
+    overrides={
+        'kpoints_mesh': [3, 3, 3],
+        'walltime_hours': 2.0,
+        # Uncomment to change OSCDFT settings:
+        # 'oscdft_card': {'constraint_strength': 2.0},
     },
-    'SYSTEM': {
-        'ecutwfc': 60.0,
-        'ecutrho': 480.0,
-        'occupations': 'smearing',
-        'smearing': 'cold',
-        'degauss': 0.01,
-        'nspin': 2,
-        # ConstrainedScanWorkChain sets starting_magnetization per-atom internally
-    },
-    'ELECTRONS': {
-        'conv_thr': 1.0e-8,
-        'mixing_beta': 0.1,
-        'electron_maxstep': 500,
-        'mixing_mode': 'local-TF',
-    },
-})
+)
 
-# ── OSCDFT card ─────────────────────────────────────────────────────────────
-oscdft_card = Dict(dict={
-    'oscdft_type': 2,
-    'n_oscdft': total_dimensions,       # 10 for 2 × 3d Fe sites
-    'constraint_strength': 1.0,
-    'constraint_conv_thr': 0.005,
-    'constraint_maxstep': 200,
-    'constraint_mixing_beta': 0.4,
-})
-
-# ── Build and submit ─────────────────────────────────────────────────────────
-inputs = {
-    'structure': hubbard_structure,
-    'parameters': parameters,
-    'kpoints': kpoints,
-    'code': code,
-    'tm_atoms': List(list=tm_atoms),
-    'oscdft_card': oscdft_card,
-    # Pass the PKs of the stored target matrices as a plain integer List;
-    # ConstrainedScanWorkChain.run_all() calls load_node() on each PK.
-    'occupation_matrices_list': List(list=target_matrix_pks),
-    'walltime_hours': Float(2.0),
-}
-
-workchain = submit(ConstrainedScanWorkChain, **inputs)
+workchain = submit(builder)
 
 print(f"\nSubmitted ConstrainedScanWorkChain with PK: {workchain.pk}")
 print(f"Monitor with: verdi process status {workchain.pk}")

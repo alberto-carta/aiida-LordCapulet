@@ -1,0 +1,18 @@
+# Protocol file for GlobalConstrainedSearchWorkChain.
+# Only the global search parameters live here.
+# DFT parameters for the AFM and constrained sub-workchains come from
+# afm_scan.yaml and constrained_scan.yaml respectively.
+
+default_protocol: default
+
+Nmax: 20              # maximum number of constrained calculations to run in total
+N: 4                  # number of proposals per generation
+proposal_mode: random_so_n   # see lordcapulet.functions.propose for available modes
+proposal_debug: false
+proposal_holistic: false
+
+protocols:
+    default:
+        description: >
+            Standard global search: AFM initialisation followed by iterative
+            batches of SO(N)-rotated constrained calculations until Nmax is reached.

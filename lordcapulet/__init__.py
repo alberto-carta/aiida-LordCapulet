@@ -14,9 +14,11 @@ __email__ = "your.email@example.com"
 from .calculations.constrained_pw import ConstrainedPWCalculation
 from .workflows.afm_scan import AFMScanWorkChain
 from .workflows.constrained_scan import ConstrainedScanWorkChain
+from .workflows.global_constrained_search import GlobalConstrainedSearchWorkChain
 
 __all__ = [
     'ConstrainedPWCalculation',
-    'AFMScanWorkChain', 
+    'AFMScanWorkChain',
     'ConstrainedScanWorkChain',
+    'GlobalConstrainedSearchWorkChain',
 ]

@@ -59,7 +59,10 @@ Issues = "https://github.com/alberto-carta/aiida-LordCapulet/issues"
 [project.entry-points."aiida.workflows"]
 "lordcapulet.afm_scan" = "lordcapulet.workflows.afm_scan:AFMScanWorkChain"
 "lordcapulet.constrained_scan" = "lordcapulet.workflows.constrained_scan:ConstrainedScanWorkChain"
-# needs entrypoint for Global scan 
+"lordcapulet.global_constrained_search" = "lordcapulet.workflows.global_constrained_search:GlobalConstrainedSearchWorkChain"
+
+[tool.setuptools.package-data]
+"lordcapulet.workflows.protocols" = ["*.yaml"]
 
 line-length = 88
 target-version = ['py38']

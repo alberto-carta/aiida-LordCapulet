@@ -65,7 +65,7 @@ class _FakeOutputs:
     when the guard is broken.
 
     ``_FakeOutputs`` implements ``__contains__`` via ``hasattr``, so only
-    attributes that were explicitly set are considered present – matching
+    attributes that were explicitly set are considered present - matching
     real AiiDA output-namespace behaviour.
     """
 
@@ -373,7 +373,7 @@ class TestProcessAfmResults:
     proposals.  Both are replaced in tests:
 
     * ``ctx.afm_wc`` is set to a ``_mock_afm_wc(...)`` stub that carries
-      pre-built ``List`` nodes as outputs – no real AFM calculation needed.
+      pre-built ``List`` nodes as outputs - no real AFM calculation needed.
 
     * ``aiida_propose_occ_matrices_from_results`` is patched at the
       *import site* in the workflow module so that it returns a stored ``List``
@@ -677,8 +677,8 @@ class TestProcessConstrainedResults:
     Strategy
     --------
     ``process_constrained_results`` reads outputs from
-    ``ctx.constrained_wc``, updates several ``ctx`` lists, and—if the
-    cumulative count is below ``Nmax``—calls
+    ``ctx.constrained_wc``, updates several ``ctx`` lists, and-if the
+    cumulative count is below ``Nmax``-calls
     ``aiida_propose_occ_matrices_from_results`` to generate the next batch.
 
     We set ``ctx.constrained_wc`` to a ``_mock_constrained_wc`` stub and
@@ -854,7 +854,7 @@ class TestGatherFinalResults:
     ``List`` and ``Dict`` nodes, then calls ``self.out`` to register them.
 
     We initialise ``ctx`` with pre-built lists of PKs (using plain integers
-    – no real nodes needed, the step just stores them in new List nodes) and
+    - no real nodes needed, the step just stores them in new List nodes) and
     patch ``self.out`` with ``_capture_out_factory`` to intercept the four
     emitted outputs.
     """

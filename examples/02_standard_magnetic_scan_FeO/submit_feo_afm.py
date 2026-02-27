@@ -1,12 +1,9 @@
 #%%
 import aiida
-from aiida.orm import Code, Dict, StructureData, KpointsData, List, Int, Str, Bool, Float, load_node
+from aiida.orm import load_node
 from aiida.engine import submit
 from lordcapulet.workflows import AFMScanWorkChain
-from lordcapulet.utils.preprocessing.submission import tag_and_list_atoms, get_default_manifolds, get_dimensions
-# import HubbardUtils to rearrange atoms
-from aiida_quantumespresso.utils.hubbard import HubbardUtils
-from aiida_quantumespresso.data.hubbard_structure import HubbardStructureData
+from lordcapulet.utils import prepare_tm_info, prepare_hubbard_structure
 from ase.io import read
 
 # Load AiiDA profile
@@ -17,97 +14,93 @@ atoms = read('../FeO.scf.in', format='espresso-in')  # Adjust path as needed
 
 #%%
 # tag transition metal atoms and get their manifolds and dimensions
-tm_atoms = tag_and_list_atoms(atoms, table={'Fe'})
-tm_manifolds = get_default_manifolds(tm_atoms)
-tm_dimensions = get_dimensions(tm_manifolds) 
-
-total_dimensions = sum(tm_dimensions)
+tm_atoms, tm_manifolds, tm_dimensions = prepare_tm_info(atoms, table={'Fe'})
 
 # print tags
 print("Tagged transition atoms:", tm_atoms)
 print("Corresponding manifolds:", tm_manifolds)
 print("Corresponding dimensions:", tm_dimensions)
-print("Total dimensions:", total_dimensions)
+print("Total dimensions:", sum(tm_dimensions))
 
-structure = StructureData(ase=atoms)
-
-Uval = 5 # Hubbard U
-hubbard_structure = HubbardStructureData.from_structure(structure)
-
-
-for itm, tm_atom in enumerate(tm_atoms):
-    hubbard_structure.initialize_onsites_hubbard(
-        atom_name=tm_atom,
-        atom_manifold=tm_manifolds[itm],
-        value=Uval  )  # 
-
-# make sure that the Hubbard atoms are always before the rest of the atoms in the structure
-hutils = HubbardUtils(hubbard_structure)
-hutils.reorder_atoms()
-hubbard_structure = hutils._hubbard_structure
+# u_values can be a single float (same U for all TM sites) or a per-atom
+# list with one entry per site, e.g. u_values=[5.0, 4.0]
+hubbard_structure = prepare_hubbard_structure(
+    atoms, tm_atoms, tm_manifolds, u_values=5.0
+)
 
 code = aiida.orm.load_code('pwx_const@daint-general')  # Adjust to your code
+# Use this if you want explicit control over every single input without relying
+# on the YAML defaults.  You are responsible for setting every required field.
+# Uncomment the block below and comment out Option B to use it.
+#
+# from aiida.orm import Dict, KpointsData, List, Float, Str
+#
+# kpoints = KpointsData()
+# kpoints.set_kpoints_mesh([3, 3, 3])
+#
+# parameters = Dict(dict={
+#     'CONTROL': {
+#         'calculation': 'scf',
+#         'restart_mode': 'from_scratch',
+#         'verbosity': 'high',
+#     },
+#     'SYSTEM': {
+#         'ecutwfc': 40.0,
+#         'ecutrho': 480.0,
+#         'occupations': 'smearing',
+#         'smearing': 'cold',
+#         'degauss': 0.02,
+#         'nspin': 2,
+#     },
+#     'ELECTRONS': {
+#         'conv_thr': 1.0e-5,
+#         'mixing_beta': 0.1,
+#         'electron_maxstep': 500,
+#         'mixing_mode': 'local-TF',
+#     },
+# })
+#
+# builder = AFMScanWorkChain.get_builder()
+# builder.code = code
+# builder.structure = hubbard_structure
+# builder.kpoints = kpoints
+# builder.parameters = parameters
+# builder.tm_atoms = List(list=tm_atoms)
+# builder.magnitude = Float(0.5)          # magnetisation magnitude per site
+# builder.walltime_hours = Float(1.0)     # walltime in hours
+# builder.pseudo_family_string = Str('SSSP/1.3/PBEsol/efficiency')
 
-# Set up k-points
-kpoints = KpointsData()
-kpoints.set_kpoints_mesh([3, 3, 3])  # Adjust as needed
-
-# Define DFT parameters
-parameters = Dict(dict={
-    'CONTROL': {
-        'calculation': 'scf',
-        'restart_mode': 'from_scratch',
-        'verbosity': 'high',
+# ── Option B: protocol-based builder (recommended) ───────────────────────────
+# All defaults come from the YAML files in lordcapulet/workflows/protocols/.
+# Pass `overrides` as a nested dict to change only what you need; everything
+# else stays at the protocol default.  The k-point mesh is derived
+# automatically from the structure's reciprocal-lattice density unless you
+# explicitly pass 'kpoints_mesh' in overrides.
+#
+# Available overrides (non-exhaustive):
+#   'kpoints_distance'          - spacing in 1/Å  (default 0.4)
+#   'kpoints_mesh'              - explicit [nx,ny,nz] (bypasses density logic)
+#   'magnitude'                 - magnetisation amplitude (default 0.5)
+#   'walltime_hours'            - hours per calculation (default 2.0)
+#   'pseudo_family'             - aiida-pseudo group label
+#   'parameters'                - nested QE namelist overrides
+builder = AFMScanWorkChain.get_builder_from_protocol(
+    code=code,
+    structure=hubbard_structure,
+    tm_atoms=tm_atoms,
+    overrides={
+        # 'kpoints_mesh': [3, 3, 3],
+        # 'kpoints_distance': 0.5,  # alternative to fixed mesh
+        'walltime_hours': 1.0,
+        'parameters': {
+            'SYSTEM': {'ecutwfc': 40.0, 'ecutrho': 480.0, 'degauss': 0.02},
+            'ELECTRONS': {'conv_thr': 1.0e-5},
+        },
     },
-    'SYSTEM': {
-        'ecutwfc': 40.0,    # Adjust as needed
-        'ecutrho': 480.0,   # Adjust as needed
-        'occupations': 'smearing',
-        'smearing': 'cold',
-        'degauss': 0.02,
-        'nspin': 2,
-        # Add other system parameters as needed
-    },
-    'ELECTRONS': {
-        'conv_thr': 1.0e-5,
-        'mixing_beta': 0.1,
-        'electron_maxstep': 500,
-        # 'mixing_mode': 'local-TF',
-    },
-})
-
-
-
-
-#%%
-
-oscdft_card = Dict(dict={
-    'oscdft_type': 2,
-    'n_oscdft': total_dimensions,
-    'constraint_strength': 1.0,
-    'constraint_conv_thr': 0.005,
-    'constraint_maxstep': 200,
-    'constraint_mixing_beta': 0.4,
-})
-
-
-
-inputs = {
-        'structure': hubbard_structure,  # or hubbard_structure
-        'parameters': parameters,
-        'kpoints': kpoints,
-        'code': code,
-        'tm_atoms': List(list=tm_atoms),
-        'magnitude': Float(0.5),  # Magnetization magnitude for AFM
-        'walltime_hours': Float(1.0),  # AFM calculations walltime (1 hour)
-}
-
-from lordcapulet.workflows import AFMScanWorkChain
-from aiida.engine import submit
-
+)
 
 # Submit the workchain
-workchain = submit(AFMScanWorkChain, **inputs)
+workchain = submit(builder)
 
 print(f"Submitted AFMScanWorkChain with PK: {workchain.pk}")
 print(f"Monitor progress with: verdi process status {workchain.pk}")
@@ -140,3 +133,4 @@ data = extractor.extract_from_workchain(workchain_pk)
 
 # Save to JSON
 extractor.save_to_json(data, f"{material_name}_afm_scan.json")
+

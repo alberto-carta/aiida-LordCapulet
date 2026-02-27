@@ -193,7 +193,7 @@ class TestAFMScanPrepareConfigs:
 
 
 class TestAFMScanRunAll:
-    """Test the ``run_all`` step – submit count and builder contents.
+    """Test the ``run_all`` step - submit count and builder contents.
 
     Strategy
     --------
@@ -208,17 +208,17 @@ class TestAFMScanRunAll:
 
     Two extra patches are needed alongside ``submit``:
 
-    * ``append_`` — AiiDA’s ``append_`` helper validates that its argument is
+    * ``append_`` - AiiDA’s ``append_`` helper validates that its argument is
       an *awaitable* (a real process future).  If ``submit`` returns a
       ``MagicMock``, ``append_`` raises ``ValueError`` before
       ``to_context`` is reached.  Patching it out lets the call pass through.
 
-    * ``to_context`` — the step returns ``ToContext(...)``.  When called
+    * ``to_context`` - the step returns ``ToContext(...)``.  When called
       directly (not via the engine) this method tries to interact with the
       running event loop, which does not exist in tests.  Patching it
       prevents that.
 
-    * ``report`` — calls ``self.report(...)`` which logs to the AiiDA node;
+    * ``report`` - calls ``self.report(...)`` which logs to the AiiDA node;
       the node is not stored in tests, so we silence it.
     """
 
@@ -314,7 +314,7 @@ class TestAFMScanRunAll:
 
 
 class TestAFMScanGatherResults:
-    """Test the ``gather_results`` step – output lists, extras, and failure handling.
+    """Test the ``gather_results`` step - output lists, extras, and failure handling.
 
     Strategy
     --------
@@ -325,18 +325,18 @@ class TestAFMScanGatherResults:
 
     Two fixtures / patches make this testable without any real calculations:
 
-    * ``make_finished_calc_node`` — creates a ``CalcJobNode`` that is stored
+    * ``make_finished_calc_node`` - creates a ``CalcJobNode`` that is stored
       in the ephemeral AiiDA DB (so ``load_node`` works) and has
       ``process_state='finished'`` / ``exit_status`` attributes set directly,
       so ``node.is_finished`` and ``node.exit_status`` return the expected
       values without the plumpy engine having run.
 
     * ``patch('lordcapulet.workflows.afm_scan.extract_occupations_from_calc')``
-      — replaces the parser that normally reads binary/text QE output files
+      - replaces the parser that normally reads binary/text QE output files
       with a function returning a ready-made ``OccupationMatrixData`` object.
       This avoids the need for real QE output files in the test suite.
 
-    * ``patch.object(process, 'out', side_effect=capture)`` — intercepts
+    * ``patch.object(process, 'out', side_effect=capture)`` - intercepts
       ``self.out('key', node)`` calls so we can inspect what was emitted
       without the workchain being registered in the graph.
     """

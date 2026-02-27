@@ -23,13 +23,13 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 # Enable AiiDA's built-in pytest plugin: ephemeral profile, aiida_localhost, aiida_code_installed
 # aiida.tools.pytest_fixtures provides three ready-made fixtures that all
 # AiiDA-aware tests rely on:
-#   - aiida_profile          – an isolated, ephemeral AiiDA profile backed
+#   - aiida_profile          - an isolated, ephemeral AiiDA profile backed
 #                              by a temporary PostgreSQL database (pgtest).
 #                              Everything stored during a test is thrown away
 #                              when the session ends.
-#   - aiida_localhost        – a Computer named 'localhost' registered in the
+#   - aiida_localhost        - a Computer named 'localhost' registered in the
 #                              ephemeral profile.
-#   - aiida_code_installed   – factory for InstalledCode nodes attached to
+#   - aiida_code_installed   - factory for InstalledCode nodes attached to
 #                              aiida_localhost.
 # All custom fixtures below build on top of these.
 pytest_plugins = ['aiida.tools.pytest_fixtures']
@@ -43,14 +43,14 @@ def _test_priority(item) -> int:
     """Return an integer priority for a collected test item (lower runs first).
 
     Tiers:
-      1 — unit / utils          (pure Python, no AiiDA, no torch)
-      2 — unit / functions      (pure Python)
-      3 — unit / data_structures(pure Python)
-      4 — unit / bayesian       (torch only, no AiiDA)
-      5 — unit / calculations   (AiiDA, single-calc scope)
-      6 — integration / workflows (AiiDA workflows)
-      7 — integration / bayesian  (GP training, no @slow)
-      8 — integration / bayesian  (GP pipeline, @slow)
+      1 - unit / utils          (pure Python, no AiiDA, no torch)
+      2 - unit / functions      (pure Python)
+      3 - unit / data_structures(pure Python)
+      4 - unit / bayesian       (torch only, no AiiDA)
+      5 - unit / calculations   (AiiDA, single-calc scope)
+      6 - integration / workflows (AiiDA workflows)
+      7 - integration / bayesian  (GP training, no @slow)
+      8 - integration / bayesian  (GP pipeline, @slow)
     """
     path = str(item.fspath)
     is_slow = item.get_closest_marker('slow') is not None
@@ -133,7 +133,7 @@ def fixture_code(aiida_code_installed):
 
     ``aiida_code_installed`` (from ``aiida.tools.pytest_fixtures``) creates a
     *fake* InstalledCode attached to ``aiida_localhost``.  The code executable
-    does not actually exist on disk – that is fine because we never run the
+    does not actually exist on disk - that is fine because we never run the
     scheduler in these tests; the Code node is only needed to satisfy AiiDA's
     input validation when building processes.
 
@@ -364,7 +364,7 @@ def pseudo_family(generate_upf_data):
     performed, so stub files are sufficient.
 
     Scoped to ``session`` so the family is created once and reused across all
-    tests – building it for every test would be slow.
+    tests - building it for every test would be slow.
     """
     from aiida.common.constants import elements
     from aiida_pseudo.data.pseudo.upf import UpfData
@@ -513,7 +513,7 @@ def generate_inputs_constrained_pw(fixture_code, generate_structure, generate_kp
             occ_matrix_data = OccupationMatrixData(copy.deepcopy(occ_data))
             target_matrix = JsonableData(occ_matrix_data)
             # Clear cached obj so next .obj access reconstructs via from_dict,
-            # which pops @class/@module — mimicking the DB round-trip behaviour
+            # which pops @class/@module - mimicking the DB round-trip behaviour
             del target_matrix._obj
         else:
             # Legacy Dict format

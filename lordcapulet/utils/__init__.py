@@ -12,8 +12,21 @@ from lordcapulet.data_structures.occupation_matrix import (
     filter_atoms_by_species
 )
 
+from lordcapulet.utils.preprocessing.submission import (
+    tag_and_list_atoms,
+    get_default_manifolds,
+    get_dimensions,
+    prepare_tm_info,
+    prepare_hubbard_structure,
+)
+
 __all__ = [
     'OccupationMatrixData',
     'extract_occupations_from_calc',
-    'filter_atoms_by_species'
+    'filter_atoms_by_species',
+    'tag_and_list_atoms',
+    'get_default_manifolds',
+    'get_dimensions',
+    'prepare_tm_info',
+    'prepare_hubbard_structure',
 ]
