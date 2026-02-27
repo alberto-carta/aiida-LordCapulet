@@ -75,7 +75,11 @@ class OccupationMatrixData:
         # so here we keep an internal structure
         
         for atom_data in occupations_list:
-            atom_label = atom_data['atom_index']
+            # Always use 'Atom_N' string keys so the key format is consistent
+            # regardless of whether the data was just parsed from QE or loaded
+            # back from the AiiDA database (where JSON round-trip would turn an
+            # integer key into a string anyway).
+            atom_label = f"Atom_{atom_data['atom_index']}"
             atom_specie = atom_data['kind_name']
             shell = atom_data['manifold']
             occ_matrix = atom_data['occupations']
@@ -179,7 +183,8 @@ class OccupationMatrixData:
         matrix = matrix_data['matrix']
         
         for atom_idx, atom_matrix in enumerate(matrix):
-            atom_label = atom_idx + 1
+            # Use 'Atom_N' keys to match the rest of the codebase
+            atom_label = f"Atom_{atom_idx + 1}"
             specie = atom_species[atom_idx] if atom_species and atom_idx < len(atom_species) else 'Unknown'
             
             up_matrix = atom_matrix[0]  # First spin channel
@@ -358,25 +363,6 @@ class OccupationMatrixData:
         return self.__str__()
 
 
-
-
-# should this be removed? We do not really use it
-class OccupationMatrixAiidaData(JsonableData):
-    """
-    AiiDA JsonableData wrapper for OccupationMatrixData.
-    
-    This allows storing OccupationMatrixData in the AiiDA database
-    """
-    
-    def __init__(self, obj: OccupationMatrixData = None, **kwargs):
-        if obj is None:
-            obj = OccupationMatrixData()
-        super().__init__(obj, **kwargs)
-    
-    @property
-    def occupation_data(self) -> OccupationMatrixData:
-        """Get the wrapped OccupationMatrixData object."""
-        return self.obj
 
 
 # Utility functions for backward compatibility and easy migration

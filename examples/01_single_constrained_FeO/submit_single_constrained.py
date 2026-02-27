@@ -11,7 +11,7 @@ ConstrainedPWCalculation that drives the electronic density towards that target.
 import numpy as np
 import aiida
 from aiida.orm import (
-    Dict, KpointsData, List, Float, load_group, JsonableData
+    Dict, KpointsData, List, Float, load_group, JsonableData, load_node
 )
 from aiida.engine import submit
 from ase.io import read
@@ -21,10 +21,7 @@ from aiida_quantumespresso.data.hubbard_structure import HubbardStructureData
 from aiida.orm import StructureData
 
 from lordcapulet.calculations.constrained_pw import ConstrainedPWCalculation
-from lordcapulet.data_structures.occupation_matrix import (
-    OccupationMatrixData,
-    OccupationMatrixAiidaData,
-)
+from lordcapulet.data_structures.occupation_matrix import OccupationMatrixData
 from lordcapulet.utils.preprocessing.submission import (
     tag_and_list_atoms,
     get_default_manifolds,
@@ -33,7 +30,7 @@ from lordcapulet.utils.preprocessing.submission import (
 
 # ── Load AiiDA profile ──────────────────────────────────────────────────────
 aiida.load_profile()
-
+#%%
 # ── Build the structure ─────────────────────────────────────────────────────
 # FeO.scf.in contains two non-equivalent iron sites (Fe1, Fe2) and oxygen
 atoms = read('../FeO.scf.in', format='espresso-in')
@@ -185,6 +182,7 @@ print(f"Submitted ConstrainedPWCalculation with PK: {calc.pk}")
 print(f"Monitor with: verdi process status {calc.pk}")
 
 # %%
+
 
 if calc.process_state.value == 'finished' and calc.exit_status == 0:
     print("Calculation finished successfully!")

@@ -10,7 +10,7 @@ from aiida.engine import calcfunction, Process
 
 from .proposal_modes import propose_random_constraints, propose_random_so_n_constraints
 from .proposal_modes import propose_gaussian_process_constraints
-from lordcapulet.data_structures import OccupationMatrixData, OccupationMatrixAiidaData, extract_occupations_from_calc, filter_atoms_by_species
+from lordcapulet.data_structures import OccupationMatrixData, extract_occupations_from_calc, filter_atoms_by_species
 
 
 # This calcfunction must be reworked to accept also a list of calculations pks
@@ -87,7 +87,7 @@ def aiida_propose_occ_matrices_from_results(
             occ_matrices.append(occupation_matrix_data)
             # print a deprecated warning
             if debug and reporter is not None:
-                reporter(f"Warning: Loaded occupation matrix from Dict node with PK {pk}. This is deprecated, please use OccupationMatrixAiidaData.")
+                reporter(f"Warning: Loaded occupation matrix from Dict node with PK {pk}. This is deprecated, please use JsonableData wrapping OccupationMatrixData.")
         
         # Handle calculation nodes directly (for backward compatibility)
         elif hasattr(node, 'process_type') and ('aiida.calculations:quantumespresso.pw' in node.process_type or 'aiida.calculations:lordcapulet.constrained_pw' in node.process_type):
@@ -101,7 +101,7 @@ def aiida_propose_occ_matrices_from_results(
                 raise ValueError(f"CalcJobNode with PK {pk}, error in parsing occupation_matrix: {e}")
         
         else:
-            raise ValueError(f"Unsupported node type for PK {pk}: {type(node)}. Expected OccupationMatrixAiidaData, Dict, or CalcJobNode.")
+            raise ValueError(f"Unsupported node type for PK {pk}: {type(node)}. Expected JsonableData(OccupationMatrixData), Dict, or CalcJobNode.")
         
 
     # now get the N dictionaries from the list

@@ -1,0 +1,54 @@
+&control
+  prefix = 'FeO_manual_id_144'
+  verbosity = 'high'
+  calculation = 'scf'
+  outdir = './outputs'
+  pseudo_dir = '.'
+  restart_mode = 'from_scratch'
+/
+
+&system
+  ibrav = 0
+  nat = 4
+  ntyp = 3
+  starting_magnetization(1) = 1.0e-5
+  starting_magnetization(2) = 1.0e-5
+  nspin = 2
+  ecutwfc = 60.0
+  ecutrho = 480.0
+  occupations = 'smearing'
+  smearing = 'mv'
+  nbnd = 50
+  degauss = 0.01
+/
+
+&electrons
+  mixing_beta = 0.3
+  electron_maxstep = 500
+  conv_thr = 1.0e-10
+  mixing_mode = 'local-TF'
+/
+
+ATOMIC_SPECIES
+Fe1 55.845 Fe.UPF
+Fe2 55.845 Fe.UPF
+O 15.9994 O.UPF
+
+CELL_PARAMETERS (angstrom)
+2.1669806786477848	2.1669806786477848	4.3339613572955695
+2.1669806786477848	4.3339613572955695	2.1669806786477848
+4.3339613572955695	2.1669806786477848	2.1669806786477848
+
+ATOMIC_POSITIONS (crystal) 
+Fe1 0.0 0.0 0.0
+Fe2 0.5 0.5 0.5
+O 0.25 0.25 0.25
+O 0.75 0.75 0.75
+
+HUBBARD (ortho-atomic) 
+U  Fe1-3d 5.0
+U  Fe2-3d 5.0
+U  O-2p 0.0
+
+K_POINTS (automatic)
+8 8 8 0 0 0

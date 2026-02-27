@@ -7,15 +7,13 @@ Utility modules for LordCapulet.
 # from .magnetism_utils import create_magnetic_configs
 
 from lordcapulet.data_structures.occupation_matrix import (
-    OccupationMatrixData, 
-    OccupationMatrixAiidaData,
+    OccupationMatrixData,
     extract_occupations_from_calc,
     filter_atoms_by_species
 )
 
 __all__ = [
-    'OccupationMatrixData', 
-    'OccupationMatrixAiidaData',
+    'OccupationMatrixData',
     'extract_occupations_from_calc',
     'filter_atoms_by_species'
 ]
