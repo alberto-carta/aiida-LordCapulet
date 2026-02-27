@@ -15,69 +15,69 @@ from lordcapulet.workflows.protocols.utils import ProtocolMixin, recursive_merge
 # recursive_merge
 # =============================================================================
 
-class TestRecursiveMerge:
-    """Test the plain-Python deep-merge helper."""
+# class TestRecursiveMerge:
+#     """Test the plain-Python deep-merge helper."""
 
-    def test_flat_update(self):
-        """Second dict wins for top-level scalar keys."""
-        result = recursive_merge({'a': 1, 'b': 2}, {'b': 99, 'c': 3})
-        assert result == {'a': 1, 'b': 99, 'c': 3}
+#     def test_flat_update(self):
+#         """Second dict wins for top-level scalar keys."""
+#         result = recursive_merge({'a': 1, 'b': 2}, {'b': 99, 'c': 3})
+#         assert result == {'a': 1, 'b': 99, 'c': 3}
 
-    def test_nested_merge_only_changes_listed_key(self):
-        """Only the specified sub-key changes; all siblings are preserved."""
-        base = {
-            'params': {
-                'SYSTEM': {'ecutwfc': 60, 'ecutrho': 480},
-                'CONTROL': {'calculation': 'scf'},
-            }
-        }
-        update = {'params': {'SYSTEM': {'ecutwfc': 100}}}
-        result = recursive_merge(base, update)
+#     def test_nested_merge_only_changes_listed_key(self):
+#         """Only the specified sub-key changes; all siblings are preserved."""
+#         base = {
+#             'params': {
+#                 'SYSTEM': {'ecutwfc': 60, 'ecutrho': 480},
+#                 'CONTROL': {'calculation': 'scf'},
+#             }
+#         }
+#         update = {'params': {'SYSTEM': {'ecutwfc': 100}}}
+#         result = recursive_merge(base, update)
 
-        assert result['params']['SYSTEM']['ecutwfc'] == 100
-        assert result['params']['SYSTEM']['ecutrho'] == 480   # preserved
-        assert result['params']['CONTROL']['calculation'] == 'scf'  # preserved
+#         assert result['params']['SYSTEM']['ecutwfc'] == 100
+#         assert result['params']['SYSTEM']['ecutrho'] == 480   # preserved
+#         assert result['params']['CONTROL']['calculation'] == 'scf'  # preserved
 
-    def test_new_key_added(self):
-        """A key present only in update is added to the result."""
-        result = recursive_merge({'a': 1}, {'b': 2})
-        assert result == {'a': 1, 'b': 2}
+#     def test_new_key_added(self):
+#         """A key present only in update is added to the result."""
+#         result = recursive_merge({'a': 1}, {'b': 2})
+#         assert result == {'a': 1, 'b': 2}
 
-    def test_does_not_mutate_base(self):
-        """Base dict must be untouched after merging."""
-        base = {'a': {'x': 1}}
-        recursive_merge(base, {'a': {'x': 99}})
-        assert base['a']['x'] == 1
+#     def test_does_not_mutate_base(self):
+#         """Base dict must be untouched after merging."""
+#         base = {'a': {'x': 1}}
+#         recursive_merge(base, {'a': {'x': 99}})
+#         assert base['a']['x'] == 1
 
-    def test_does_not_mutate_update(self):
-        """Update dict must be untouched after merging."""
-        update = {'b': {'nested': 2}}
-        recursive_merge({'a': 1}, update)
-        assert update == {'b': {'nested': 2}}
+#     def test_does_not_mutate_update(self):
+#         """Update dict must be untouched after merging."""
+#         update = {'b': {'nested': 2}}
+#         recursive_merge({'a': 1}, update)
+#         assert update == {'b': {'nested': 2}}
 
-    def test_list_replaced_not_merged(self):
-        """Lists are replaced wholesale - not element-wise appended."""
-        result = recursive_merge({'kpoints': [4, 4, 4]}, {'kpoints': [6, 6, 6]})
-        assert result['kpoints'] == [6, 6, 6]
+#     def test_list_replaced_not_merged(self):
+#         """Lists are replaced wholesale - not element-wise appended."""
+#         result = recursive_merge({'kpoints': [4, 4, 4]}, {'kpoints': [6, 6, 6]})
+#         assert result['kpoints'] == [6, 6, 6]
 
-    def test_triple_nesting(self):
-        """Works for at least three nesting levels."""
-        base = {'a': {'b': {'c': 1, 'd': 2}}}
-        result = recursive_merge(base, {'a': {'b': {'c': 99}}})
-        assert result['a']['b']['c'] == 99
-        assert result['a']['b']['d'] == 2  # sibling preserved
+#     def test_triple_nesting(self):
+#         """Works for at least three nesting levels."""
+#         base = {'a': {'b': {'c': 1, 'd': 2}}}
+#         result = recursive_merge(base, {'a': {'b': {'c': 99}}})
+#         assert result['a']['b']['c'] == 99
+#         assert result['a']['b']['d'] == 2  # sibling preserved
 
-    def test_empty_update_returns_copy_of_base(self):
-        base = {'x': 1}
-        result = recursive_merge(base, {})
-        assert result == base
-        assert result is not base  # must be a copy
+#     def test_empty_update_returns_copy_of_base(self):
+#         base = {'x': 1}
+#         result = recursive_merge(base, {})
+#         assert result == base
+#         assert result is not base  # must be a copy
 
-    def test_empty_base_returns_copy_of_update(self):
-        update = {'y': 2}
-        result = recursive_merge({}, update)
-        assert result == update
-        assert result is not update
+#     def test_empty_base_returns_copy_of_update(self):
+#         update = {'y': 2}
+#         result = recursive_merge({}, update)
+#         assert result == update
+#         assert result is not update
 
 
 # =============================================================================

@@ -38,7 +38,7 @@ print("Total OSCDFT dimensions:", sum(tm_dimensions))
 # u_values can be a single float (same U for all TM sites) or a per-atom
 # list with one entry per site, e.g. u_values=[5.0, 4.0]
 hubbard_structure = prepare_hubbard_structure(
-    atoms, tm_atoms, tm_manifolds, u_values=5.0
+    atoms, tm_atoms, tm_manifolds, U_values=5.0
 )
 
 # ── Reference occupation matrices ───────────────────────────────────────────
