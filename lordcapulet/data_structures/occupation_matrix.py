@@ -358,6 +358,9 @@ class OccupationMatrixData:
         return self.__str__()
 
 
+
+
+# should this be removed? We do not really use it
 class OccupationMatrixAiidaData(JsonableData):
     """
     AiiDA JsonableData wrapper for OccupationMatrixData.
