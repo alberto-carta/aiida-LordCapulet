@@ -37,7 +37,7 @@ def _constrained_inputs(structure, kpoints, code, pks):
                             'SYSTEM': {'ecutwfc': 30, 'ecutrho': 240, 'nspin': 2}}),
         'kpoints': kpoints,
         'code': code,
-        'tm_atoms': List(list=['Fe']),
+        'hubbard_corr_atoms': List(list=['Fe']),
         'oscdft_card': Dict({'nconstr': 1}),
         'occupation_matrices_list': List(list=pks),
     }
@@ -100,7 +100,7 @@ class TestConstrainedScanDefine:
             }),
             'kpoints': kpoints,
             'code': code,
-            'tm_atoms': List(list=['Fe']),
+            'hubbard_corr_atoms': List(list=['Fe']),
             'oscdft_card': Dict({'nconstr': 1}),
             'occupation_matrices_list': List(list=[occ_node.pk]),
         }
@@ -169,7 +169,7 @@ class TestConstrainedScanPrepareCalculations:
             }),
             'kpoints': kpoints,
             'code': code,
-            'tm_atoms': List(list=['Fe']),
+            'hubbard_corr_atoms': List(list=['Fe']),
             'oscdft_card': Dict({'nconstr': 1}),
             'occupation_matrices_list': List(list=pks),
         }

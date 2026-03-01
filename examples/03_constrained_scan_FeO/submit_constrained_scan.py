@@ -17,6 +17,7 @@ from aiida.engine import submit
 from ase.io import read
 
 
+from lordcapulet.workflows import ConstrainedScanWorkChain
 from lordcapulet.data_structures.occupation_matrix import OccupationMatrixData
 from lordcapulet.functions.proposal_modes.shared_functionality import apply_random_rotation
 from lordcapulet.utils import prepare_tm_info, prepare_hubbard_structure
@@ -28,17 +29,17 @@ aiida.load_profile()
 # ── Build the structure ─────────────────────────────────────────────────────
 atoms = read('../FeO.scf.in', format='espresso-in')
 
-tm_atoms, tm_manifolds, tm_dimensions = prepare_tm_info(atoms, table={'Fe'})
+hubbard_corr_atoms, hubbard_corr_manifolds, hubbard_corr_dimensions = prepare_tm_info(atoms, table={'Fe'})
 
-print("Tagged transition atoms:", tm_atoms)
-print("Corresponding manifolds:", tm_manifolds)
-print("Orbital dimensions:", tm_dimensions)
-print("Total OSCDFT dimensions:", sum(tm_dimensions))
+print("Tagged transition atoms:", hubbard_corr_atoms)
+print("Corresponding manifolds:", hubbard_corr_manifolds)
+print("Orbital dimensions:", hubbard_corr_dimensions)
+print("Total OSCDFT dimensions:", sum(hubbard_corr_dimensions))
 
 # u_values can be a single float (same U for all TM sites) or a per-atom
 # list with one entry per site, e.g. u_values=[5.0, 4.0]
 hubbard_structure = prepare_hubbard_structure(
-    atoms, tm_atoms, tm_manifolds, U_values=5.0
+    atoms, hubbard_corr_atoms, hubbard_corr_manifolds, U_values=5.0
 )
 
 # ── Reference occupation matrices ───────────────────────────────────────────
@@ -110,7 +111,7 @@ code = aiida.orm.load_code('pwx_const@daint-general')  # adjust to your installa
 # ── Option A: fully manual builder (no protocols) ────────────────────────────
 # Use this if you want explicit control over every single input without relying
 # on the YAML defaults.  n_oscdft must equal the total number of orbital
-# channels across all TM sites (sum of tm_dimensions, which is 10 for 2x3d).
+# channels across all TM sites (sum of hubbard_corr_dimensions, which is 10 for 2x3d).
 # Uncomment the block below and comment out Option B to use it.
 #
 # from aiida.orm import Dict, KpointsData, List, Float, Str
@@ -142,7 +143,7 @@ code = aiida.orm.load_code('pwx_const@daint-general')  # adjust to your installa
 #
 # oscdft_card = Dict(dict={
 #     'oscdft_type': 2,
-#     'n_oscdft': sum(tm_dimensions),   # 10 for 2 Fe 3d sites
+#     'n_oscdft': sum(hubbard_corr_dimensions),   # 10 for 2 Fe 3d sites
 #     'constraint_strength': 1.0,
 #     'constraint_conv_thr': 0.005,
 #     'constraint_maxstep': 200,
@@ -154,7 +155,7 @@ code = aiida.orm.load_code('pwx_const@daint-general')  # adjust to your installa
 # builder.structure = hubbard_structure
 # builder.kpoints = kpoints
 # builder.parameters = parameters
-# builder.tm_atoms = List(list=tm_atoms)
+# builder.hubbard_corr_atoms = List(list=hubbard_corr_atoms)
 # builder.oscdft_card = oscdft_card
 # builder.occupation_matrices_list = List(list=target_matrix_pks)
 # builder.walltime_hours = Float(2.0)
@@ -162,7 +163,7 @@ code = aiida.orm.load_code('pwx_const@daint-general')  # adjust to your installa
 
 # ── Option B: protocol-based builder (recommended) ───────────────────────────
 # All DFT parameters, k-points, pseudo family, and OSCDFT defaults are loaded
-# from the protocol YAMLs.  n_oscdft is computed automatically from tm_atoms.
+# from the protocol YAMLs.  n_oscdft is computed automatically from hubbard_corr_atoms.
 # Pass `overrides` as a nested dict to change only what you need.
 #
 # Available overrides (non-exhaustive):
@@ -176,7 +177,7 @@ code = aiida.orm.load_code('pwx_const@daint-general')  # adjust to your installa
 builder = ConstrainedScanWorkChain.get_builder_from_protocol(
     code=code,
     structure=hubbard_structure,
-    tm_atoms=tm_atoms,
+    hubbard_corr_atoms=hubbard_corr_atoms,
     occupation_matrices_list=target_matrix_pks,
     overrides={
         'kpoints_mesh': [3, 3, 3],

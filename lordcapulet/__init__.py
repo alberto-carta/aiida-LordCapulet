@@ -12,13 +12,17 @@ __email__ = "your.email@example.com"
 
 # Import main classes for convenient access
 from .calculations.constrained_pw import ConstrainedPWCalculation
-from .workflows.afm_scan import AFMScanWorkChain
+from .workflows.standard_magnetic_scan import StandardMagneticScanWorkChain
 from .workflows.constrained_scan import ConstrainedScanWorkChain
 from .workflows.global_constrained_search import GlobalConstrainedSearchWorkChain
 
+# Backwards-compatibility alias
+AFMScanWorkChain = StandardMagneticScanWorkChain
+
 __all__ = [
     'ConstrainedPWCalculation',
-    'AFMScanWorkChain',
+    'StandardMagneticScanWorkChain',
+    'AFMScanWorkChain',  # deprecated alias
     'ConstrainedScanWorkChain',
     'GlobalConstrainedSearchWorkChain',
 ]

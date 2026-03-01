@@ -70,10 +70,10 @@ class TestPrepareTmInfo:
     def test_feo_single_tm(self):
         from lordcapulet.utils.preprocessing.submission import prepare_tm_info
         atoms = _ase_feo()
-        tm_atoms, tm_manifolds, tm_dimensions = prepare_tm_info(atoms)
-        assert tm_atoms == ['Fe1']
-        assert tm_manifolds == ['3d']
-        assert tm_dimensions == [50]   # 5*5*2
+        hubbard_corr_atoms, hubbard_corr_manifolds, hubbard_corr_dimensions = prepare_tm_info(atoms)
+        assert hubbard_corr_atoms == ['Fe1']
+        assert hubbard_corr_manifolds == ['3d']
+        assert hubbard_corr_dimensions == [50]   # 5*5*2
 
     def test_tag_is_set_on_atoms(self):
         """prepare_tm_info must set atom.tag on the input Atoms in-place."""
@@ -86,8 +86,8 @@ class TestPrepareTmInfo:
     def test_two_tm_sequential_tags(self):
         from lordcapulet.utils.preprocessing.submission import prepare_tm_info
         atoms = _ase_fe2o3()
-        tm_atoms, _manifolds, _dims = prepare_tm_info(atoms)
-        assert tm_atoms == ['Fe1', 'Fe2']
+        hubbard_corr_atoms, _manifolds, _dims = prepare_tm_info(atoms)
+        assert hubbard_corr_atoms == ['Fe1', 'Fe2']
         assert _manifolds == ['3d', '3d']
         assert _dims == [50, 50]
 
@@ -95,18 +95,18 @@ class TestPrepareTmInfo:
         """Treating O as the Hubbard atom via a custom table."""
         from lordcapulet.utils.preprocessing.submission import prepare_tm_info
         atoms = _ase_feo()
-        tm_atoms, tm_manifolds, _dims = prepare_tm_info(atoms, table={'O'})
-        assert tm_atoms == ['O1']
-        assert tm_manifolds == ['2p']
+        hubbard_corr_atoms, hubbard_corr_manifolds, _dims = prepare_tm_info(atoms, table={'O'})
+        assert hubbard_corr_atoms == ['O1']
+        assert hubbard_corr_manifolds == ['2p']
 
     def test_empty_structure_returns_empty_lists(self):
         from ase import Atoms
         from lordcapulet.utils.preprocessing.submission import prepare_tm_info
         atoms = Atoms()  # completely empty
-        tm_atoms, tm_manifolds, tm_dimensions = prepare_tm_info(atoms)
-        assert tm_atoms == []
-        assert tm_manifolds == []
-        assert tm_dimensions == []
+        hubbard_corr_atoms, hubbard_corr_manifolds, hubbard_corr_dimensions = prepare_tm_info(atoms)
+        assert hubbard_corr_atoms == []
+        assert hubbard_corr_manifolds == []
+        assert hubbard_corr_dimensions == []
 
     def test_no_tm_in_structure(self):
         """A structure with no TM atoms returns empty lists."""
@@ -118,8 +118,8 @@ class TestPrepareTmInfo:
             positions=[(0, 0, 0), (1, 0, 0)],
             cell=[[a, 0, 0], [0, a, 0], [0, 0, a]],
         )
-        tm_atoms, _m, _d = prepare_tm_info(atoms)
-        assert tm_atoms == []
+        hubbard_corr_atoms, _m, _d = prepare_tm_info(atoms)
+        assert hubbard_corr_atoms == []
 
 
 # =============================================================================
@@ -133,8 +133,8 @@ def _hs_feo(aiida_profile, **kwargs):
         prepare_tm_info,
     )
     atoms = _ase_feo()
-    tm_atoms, tm_manifolds, _ = prepare_tm_info(atoms)
-    return prepare_hubbard_structure(atoms, tm_atoms, tm_manifolds, **kwargs)
+    hubbard_corr_atoms, hubbard_corr_manifolds, _ = prepare_tm_info(atoms)
+    return prepare_hubbard_structure(atoms, hubbard_corr_atoms, hubbard_corr_manifolds, **kwargs)
 
 
 def _hs_fe2o3(aiida_profile, **kwargs):
@@ -144,8 +144,8 @@ def _hs_fe2o3(aiida_profile, **kwargs):
         prepare_tm_info,
     )
     atoms = _ase_fe2o3()
-    tm_atoms, tm_manifolds, _ = prepare_tm_info(atoms)
-    return prepare_hubbard_structure(atoms, tm_atoms, tm_manifolds, **kwargs)
+    hubbard_corr_atoms, hubbard_corr_manifolds, _ = prepare_tm_info(atoms)
+    return prepare_hubbard_structure(atoms, hubbard_corr_atoms, hubbard_corr_manifolds, **kwargs)
 
 
 class TestPrepareHubbardStructureOnsite:
@@ -200,12 +200,12 @@ class TestPrepareHubbardStructureOnsite:
             prepare_tm_info,
         )
         atoms = _ase_feo()
-        tm_atoms, tm_manifolds, _ = prepare_tm_info(atoms)
+        hubbard_corr_atoms, hubbard_corr_manifolds, _ = prepare_tm_info(atoms)
         with pytest.raises(ValueError, match='lengths must match'):
-            prepare_hubbard_structure(atoms, tm_atoms, tm_manifolds, U_values=[1.0, 2.0])
+            prepare_hubbard_structure(atoms, hubbard_corr_atoms, hubbard_corr_manifolds, U_values=[1.0, 2.0])
 
     def test_onsite_manifold_recorded(self, aiida_profile):
-        """The manifold in the stored parameter must match tm_manifolds."""
+        """The manifold in the stored parameter must match hubbard_corr_manifolds."""
         hs = _hs_feo(aiida_profile)
         onsite = [p for p in hs.hubbard.parameters if p.hubbard_type == 'Ueff']
         assert onsite[0].atom_manifold == '3d'
@@ -237,8 +237,8 @@ class TestPrepareHubbardStructureOrdering:
             prepare_tm_info,
         )
         atoms = _ase_ofe()   # O is atom[0], Fe is atom[1]
-        tm_atoms, tm_manifolds, _ = prepare_tm_info(atoms)
-        hs = prepare_hubbard_structure(atoms, tm_atoms, tm_manifolds)
+        hubbard_corr_atoms, hubbard_corr_manifolds, _ = prepare_tm_info(atoms)
+        hs = prepare_hubbard_structure(atoms, hubbard_corr_atoms, hubbard_corr_manifolds)
 
         symbols = [s.kind_name for s in hs.sites]
         fe_indices = [i for i, n in enumerate(symbols) if n.startswith('Fe')]
@@ -322,10 +322,10 @@ class TestPrepareHubbardStructureIntersite:
             prepare_tm_info,
         )
         atoms = _ase_feo()
-        tm_atoms, tm_manifolds, _ = prepare_tm_info(atoms)
+        hubbard_corr_atoms, hubbard_corr_manifolds, _ = prepare_tm_info(atoms)
         with pytest.raises(ValueError, match='lengths must match'):
             prepare_hubbard_structure(
-                atoms, tm_atoms, tm_manifolds,
+                atoms, hubbard_corr_atoms, hubbard_corr_manifolds,
                 neighbors=[('O1', '2p')],
                 intersite_V_values=[1.0, 2.0],  # 2 values for 1 neighbor
             )

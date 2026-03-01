@@ -25,42 +25,42 @@ class TestTagAndListAtoms:
     def test_iron_oxide(self):
         """Fe should be tagged as TM, O should not appear in result."""
         atoms = [_MockAtom('Fe'), _MockAtom('O')]
-        tm_atoms = tag_and_list_atoms(atoms)
+        hubbard_corr_atoms = tag_and_list_atoms(atoms)
 
-        assert tm_atoms == ['Fe1']
+        assert hubbard_corr_atoms == ['Fe1']
         assert atoms[0].tag == 1
 
     def test_multiple_tm(self):
         """Multiple TM atoms should get sequential tags."""
         atoms = [_MockAtom('Fe'), _MockAtom('Ni'), _MockAtom('O'), _MockAtom('Fe')]
-        tm_atoms = tag_and_list_atoms(atoms)
+        hubbard_corr_atoms = tag_and_list_atoms(atoms)
 
-        assert tm_atoms == ['Fe1', 'Ni1', 'Fe2']
+        assert hubbard_corr_atoms == ['Fe1', 'Ni1', 'Fe2']
 
     def test_no_tm(self):
         """Structure with no TM atoms should return empty list."""
         atoms = [_MockAtom('O'), _MockAtom('H')]
-        tm_atoms = tag_and_list_atoms(atoms)
+        hubbard_corr_atoms = tag_and_list_atoms(atoms)
 
-        assert tm_atoms == []
+        assert hubbard_corr_atoms == []
 
     def test_custom_table(self):
         """Custom TM table should override the default."""
         atoms = [_MockAtom('O'), _MockAtom('Fe')]
         # Only O in custom table
-        tm_atoms = tag_and_list_atoms(atoms, table={'O'})
+        hubbard_corr_atoms = tag_and_list_atoms(atoms, table={'O'})
 
-        assert tm_atoms == ['O1']
+        assert hubbard_corr_atoms == ['O1']
 
     def test_all_3d_transition_metals(self):
         """All 3d TM elements should be recognized."""
         elements_3d = ['Sc', 'Ti', 'V', 'Cr', 'Mn', 'Fe', 'Co', 'Ni', 'Cu', 'Zn']
         atoms = [_MockAtom(el) for el in elements_3d]
-        tm_atoms = tag_and_list_atoms(atoms)
+        hubbard_corr_atoms = tag_and_list_atoms(atoms)
 
-        assert len(tm_atoms) == 10
+        assert len(hubbard_corr_atoms) == 10
         for el in elements_3d:
-            assert f'{el}1' in tm_atoms
+            assert f'{el}1' in hubbard_corr_atoms
 
 
 class TestGetDefaultManifolds:

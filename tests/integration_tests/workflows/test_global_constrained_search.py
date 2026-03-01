@@ -16,13 +16,13 @@ def _global_inputs(structure, kpoints, pw_code, constrained_code,
                    Nmax=10, N=3):
     """Minimal valid GlobalConstrainedSearchWorkChain inputs."""
     return {
-        'afm': {
+        'mag_scan': {
             'structure': structure,
             'parameters': Dict({'CONTROL': {'calculation': 'scf'},
                                 'SYSTEM': {'ecutwfc': 30, 'ecutrho': 240, 'nspin': 2}}),
             'kpoints': kpoints,
             'code': pw_code,
-            'tm_atoms': List(list=['Fe']),
+            'hubbard_corr_atoms': List(list=['Fe']),
         },
         'constrained': {
             'structure': structure,
@@ -30,7 +30,7 @@ def _global_inputs(structure, kpoints, pw_code, constrained_code,
                                 'SYSTEM': {'ecutwfc': 30, 'ecutrho': 240, 'nspin': 2}}),
             'kpoints': kpoints,
             'code': constrained_code,
-            'tm_atoms': List(list=['Fe']),
+            'hubbard_corr_atoms': List(list=['Fe']),
             'oscdft_card': Dict({'nconstr': 1}),
         },
         'Nmax': Int(Nmax),
@@ -41,7 +41,7 @@ def _global_inputs(structure, kpoints, pw_code, constrained_code,
 def _stored_list(values):
     """Create, store and return an AiiDA ``List`` node.
 
-    ``process_afm_results`` checks ``len(afm_matrices.get_list())`` and
+    ``process_mag_scan_results`` checks ``len(mag_scan_matrices.get_list())`` and
     ``gather_final_results`` calls ``.get_list()`` on the context lists.
     The nodes must be *stored* so they have a PK and can be returned as
     real workflow outputs.
@@ -54,10 +54,10 @@ def _stored_list(values):
 class _FakeOutputs:
     """Lightweight output-namespace stub.
 
-    ``GlobalConstrainedSearchWorkChain.process_afm_results`` does::
+    ``GlobalConstrainedSearchWorkChain.process_mag_scan_results`` does::
 
-        if 'converged_matrix_pks' not in self.ctx.afm_wc.outputs:
-            return self.exit_codes.ERROR_AFM_SEARCH_FAILED
+        if 'converged_matrix_pks' not in self.ctx.mag_scan_wc.outputs:
+            return self.exit_codes.ERROR_MAG_SCAN_FAILED
 
     A plain ``MagicMock`` object returns ``True`` for *any* ``__contains__``
     check because ``MagicMock.__contains__`` is itself a mock.  That would
@@ -77,10 +77,10 @@ class _FakeOutputs:
         return hasattr(self, item)
 
 
-def _mock_afm_wc(matrix_pks, calc_pks, all_calc_pks=None):
-    """Build a fake finished ``AFMScanWorkChain`` process node.
+def _mock_mag_scan_wc(matrix_pks, calc_pks, all_calc_pks=None):
+    """Build a fake finished ``StandardMagneticScanWorkChain`` process node.
 
-    ``process_afm_results`` reads three outputs off ``ctx.afm_wc``:
+    ``process_mag_scan_results`` reads three outputs off ``ctx.mag_scan_wc``:
     ``converged_matrix_pks``, ``converged_calculation_pks``, and
     ``all_calculation_pks``.  We bind stored ``List`` nodes to these
     attributes through ``_FakeOutputs`` so attribute access and
@@ -153,7 +153,7 @@ class TestGlobalSearchDefine:
         assert 'proposal_kwargs' in spec.inputs
 
         # Optional walltime overrides
-        assert 'afm_walltime_hours' in spec.inputs
+        assert 'mag_scan_walltime_hours' in spec.inputs
         assert 'constrained_walltime_hours' in spec.inputs
 
     def test_outputs_defined(self):
@@ -173,8 +173,8 @@ class TestGlobalSearchDefine:
 
         exit_codes = GlobalConstrainedSearchWorkChain.exit_codes
 
-        assert hasattr(exit_codes, 'ERROR_AFM_SEARCH_FAILED')
-        assert exit_codes.ERROR_AFM_SEARCH_FAILED.status == 400
+        assert hasattr(exit_codes, 'ERROR_MAG_SCAN_FAILED')
+        assert exit_codes.ERROR_MAG_SCAN_FAILED.status == 400
 
         assert hasattr(exit_codes, 'ERROR_CONSTRAINED_SCAN_FAILED')
         assert exit_codes.ERROR_CONSTRAINED_SCAN_FAILED.status == 401
@@ -187,7 +187,7 @@ class TestGlobalSearchDefine:
         from lordcapulet.workflows.global_constrained_search import GlobalConstrainedSearchWorkChain
 
         spec = GlobalConstrainedSearchWorkChain.spec()
-        assert 'afm' in spec.inputs
+        assert 'mag_scan' in spec.inputs
 
     def test_exposed_constrained_namespace(self):
         """Verify the constrained namespace is exposed."""
@@ -210,19 +210,19 @@ class TestShouldContinueSearch:
         constrained_code = fixture_code('lordcapulet.constrained_pw')
 
         inputs = {
-            'afm': {
+            'mag_scan': {
                 'structure': structure,
                 'parameters': Dict({'CONTROL': {'calculation': 'scf'}, 'SYSTEM': {'ecutwfc': 30, 'ecutrho': 240, 'nspin': 2}}),
                 'kpoints': kpoints,
                 'code': pw_code,
-                'tm_atoms': List(list=['Fe']),
+                'hubbard_corr_atoms': List(list=['Fe']),
             },
             'constrained': {
                 'structure': structure,
                 'parameters': Dict({'CONTROL': {'calculation': 'scf'}, 'SYSTEM': {'ecutwfc': 30, 'ecutrho': 240, 'nspin': 2}}),
                 'kpoints': kpoints,
                 'code': constrained_code,
-                'tm_atoms': List(list=['Fe']),
+                'hubbard_corr_atoms': List(list=['Fe']),
                 'oscdft_card': Dict({'nconstr': 1}),
             },
             'Nmax': Int(100),
@@ -246,19 +246,19 @@ class TestShouldContinueSearch:
         constrained_code = fixture_code('lordcapulet.constrained_pw')
 
         inputs = {
-            'afm': {
+            'mag_scan': {
                 'structure': structure,
                 'parameters': Dict({'CONTROL': {'calculation': 'scf'}, 'SYSTEM': {'ecutwfc': 30, 'ecutrho': 240, 'nspin': 2}}),
                 'kpoints': kpoints,
                 'code': pw_code,
-                'tm_atoms': List(list=['Fe']),
+                'hubbard_corr_atoms': List(list=['Fe']),
             },
             'constrained': {
                 'structure': structure,
                 'parameters': Dict({'CONTROL': {'calculation': 'scf'}, 'SYSTEM': {'ecutwfc': 30, 'ecutrho': 240, 'nspin': 2}}),
                 'kpoints': kpoints,
                 'code': constrained_code,
-                'tm_atoms': List(list=['Fe']),
+                'hubbard_corr_atoms': List(list=['Fe']),
                 'oscdft_card': Dict({'nconstr': 1}),
             },
             'Nmax': Int(100),
@@ -282,19 +282,19 @@ class TestShouldContinueSearch:
         constrained_code = fixture_code('lordcapulet.constrained_pw')
 
         inputs = {
-            'afm': {
+            'mag_scan': {
                 'structure': structure,
                 'parameters': Dict({'CONTROL': {'calculation': 'scf'}, 'SYSTEM': {'ecutwfc': 30, 'ecutrho': 240, 'nspin': 2}}),
                 'kpoints': kpoints,
                 'code': pw_code,
-                'tm_atoms': List(list=['Fe']),
+                'hubbard_corr_atoms': List(list=['Fe']),
             },
             'constrained': {
                 'structure': structure,
                 'parameters': Dict({'CONTROL': {'calculation': 'scf'}, 'SYSTEM': {'ecutwfc': 30, 'ecutrho': 240, 'nspin': 2}}),
                 'kpoints': kpoints,
                 'code': constrained_code,
-                'tm_atoms': List(list=['Fe']),
+                'hubbard_corr_atoms': List(list=['Fe']),
                 'oscdft_card': Dict({'nconstr': 1}),
             },
             'Nmax': Int(100),
@@ -321,19 +321,19 @@ class TestUpdateCounters:
         constrained_code = fixture_code('lordcapulet.constrained_pw')
 
         inputs = {
-            'afm': {
+            'mag_scan': {
                 'structure': structure,
                 'parameters': Dict({'CONTROL': {'calculation': 'scf'}, 'SYSTEM': {'ecutwfc': 30, 'ecutrho': 240, 'nspin': 2}}),
                 'kpoints': kpoints,
                 'code': pw_code,
-                'tm_atoms': List(list=['Fe']),
+                'hubbard_corr_atoms': List(list=['Fe']),
             },
             'constrained': {
                 'structure': structure,
                 'parameters': Dict({'CONTROL': {'calculation': 'scf'}, 'SYSTEM': {'ecutwfc': 30, 'ecutrho': 240, 'nspin': 2}}),
                 'kpoints': kpoints,
                 'code': constrained_code,
-                'tm_atoms': List(list=['Fe']),
+                'hubbard_corr_atoms': List(list=['Fe']),
                 'oscdft_card': Dict({'nconstr': 1}),
             },
             'Nmax': Int(100),
@@ -363,16 +363,124 @@ class TestUpdateCounters:
 # New comprehensive data-flow tests
 # ---------------------------------------------------------------------------
 
-class TestProcessAfmResults:
-    """Test the ``process_afm_results`` step.
+class TestRunInitialMagScan:
+    """Test the ``run_initial_mag_scan`` step.
 
     Strategy
     --------
-    ``process_afm_results`` reads outputs from ``ctx.afm_wc`` and then calls
+    ``run_initial_mag_scan`` builds a ``StandardMagneticScanWorkChain`` builder
+    populated from ``self.inputs.mag_scan``, optionally overrides walltime,
+    submits it, and returns ``ToContext(mag_scan_wc=future)``.
+
+    ``self.submit`` is patched to prevent real submission; the captured builder
+    argument lets us verify the correct inputs were forwarded.
+
+    This test class was added specifically to catch regressions like accessing
+    ``self.inputs.afm`` instead of ``self.inputs.mag_scan``.
+    """
+
+    def _make_process(self, generate_workchain, generate_structure,
+                      generate_kpoints_mesh, fixture_code, pseudo_family,
+                      extra_inputs=None):
+        structure = generate_structure('feo')
+        kpoints = generate_kpoints_mesh(4)
+        pw_code = fixture_code('quantumespresso.pw')
+        constrained_code = fixture_code('lordcapulet.constrained_pw')
+        inputs = _global_inputs(structure, kpoints, pw_code, constrained_code)
+        if extra_inputs:
+            inputs.update(extra_inputs)
+        return generate_workchain(GlobalConstrainedSearchWorkChain, inputs)
+
+    def test_submit_called_exactly_once(
+        self, generate_workchain, generate_structure, generate_kpoints_mesh,
+        fixture_code, pseudo_family,
+    ):
+        """run_initial_mag_scan must call submit exactly once."""
+        process = self._make_process(generate_workchain, generate_structure,
+                                     generate_kpoints_mesh, fixture_code, pseudo_family)
+        with patch.object(process, 'submit', return_value=MagicMock()) as mock_sub, \
+             patch.object(process, 'report'):
+            process.run_initial_mag_scan()
+        assert mock_sub.call_count == 1
+
+    def test_structure_forwarded_from_inputs_mag_scan(
+        self, generate_workchain, generate_structure, generate_kpoints_mesh,
+        fixture_code, pseudo_family,
+    ):
+        """The builder passed to submit must carry the structure from inputs.mag_scan.
+
+        This explicitly guards against accessing self.inputs.afm (old name)
+        instead of self.inputs.mag_scan.
+        """
+        process = self._make_process(generate_workchain, generate_structure,
+                                     generate_kpoints_mesh, fixture_code, pseudo_family)
+        captured = []
+        with patch.object(process, 'submit',
+                          side_effect=lambda b: captured.append(b) or MagicMock()), \
+             patch.object(process, 'report'):
+            process.run_initial_mag_scan()
+        assert captured[0].structure.uuid == process.inputs.mag_scan.structure.uuid
+
+    def test_returns_tocontext_with_mag_scan_wc_key(
+        self, generate_workchain, generate_structure, generate_kpoints_mesh,
+        fixture_code, pseudo_family,
+    ):
+        """run_initial_mag_scan must return ToContext keyed as 'mag_scan_wc'."""
+        from aiida.engine import ToContext
+        process = self._make_process(generate_workchain, generate_structure,
+                                     generate_kpoints_mesh, fixture_code, pseudo_family)
+        sentinel = MagicMock()
+        with patch.object(process, 'submit', return_value=sentinel), \
+             patch.object(process, 'report'):
+            result = process.run_initial_mag_scan()
+        assert isinstance(result, ToContext)
+        assert 'mag_scan_wc' in result
+        assert result['mag_scan_wc'] is sentinel
+
+    def test_walltime_override_applied_to_builder(
+        self, generate_workchain, generate_structure, generate_kpoints_mesh,
+        fixture_code, pseudo_family,
+    ):
+        """mag_scan_walltime_hours input must override walltime_hours on the submitted builder."""
+        from aiida.orm import Float
+        process = self._make_process(
+            generate_workchain, generate_structure, generate_kpoints_mesh,
+            fixture_code, pseudo_family,
+            extra_inputs={'mag_scan_walltime_hours': Float(9.9)},
+        )
+        captured = []
+        with patch.object(process, 'submit',
+                          side_effect=lambda b: captured.append(b) or MagicMock()), \
+             patch.object(process, 'report'):
+            process.run_initial_mag_scan()
+        assert float(captured[0].walltime_hours) == pytest.approx(9.9)
+
+    def test_hubbard_corr_atoms_forwarded(
+        self, generate_workchain, generate_structure, generate_kpoints_mesh,
+        fixture_code, pseudo_family,
+    ):
+        """hubbard_corr_atoms list must be forwarded unchanged from inputs.mag_scan."""
+        process = self._make_process(generate_workchain, generate_structure,
+                                     generate_kpoints_mesh, fixture_code, pseudo_family)
+        captured = []
+        with patch.object(process, 'submit',
+                          side_effect=lambda b: captured.append(b) or MagicMock()), \
+             patch.object(process, 'report'):
+            process.run_initial_mag_scan()
+        expected = process.inputs.mag_scan.hubbard_corr_atoms.get_list()
+        assert captured[0].hubbard_corr_atoms.get_list() == expected
+
+
+class TestProcessMagScanResults:
+    """Test the ``process_mag_scan_results`` step.
+
+    Strategy
+    --------
+    ``process_mag_scan_results`` reads outputs from ``ctx.mag_scan_wc`` and then calls
     ``aiida_propose_occ_matrices_from_results`` to get the first batch of
     proposals.  Both are replaced in tests:
 
-    * ``ctx.afm_wc`` is set to a ``_mock_afm_wc(...)`` stub that carries
+    * ``ctx.mag_scan_wc`` is set to a ``_mock_mag_scan_wc(...)`` stub that carries
       pre-built ``List`` nodes as outputs - no real AFM calculation needed.
 
     * ``aiida_propose_occ_matrices_from_results`` is patched at the
@@ -399,15 +507,15 @@ class TestProcessAfmResults:
         self, generate_workchain, generate_structure, generate_kpoints_mesh,
         fixture_code, pseudo_family,
     ):
-        """process_afm_results must set ctx.N_cumulative = 0."""
+        """process_mag_scan_results must set ctx.N_cumulative = 0."""
         process = self._make_process(generate_workchain, generate_structure,
                                      generate_kpoints_mesh, fixture_code, pseudo_family)
-        process.ctx.afm_wc = _mock_afm_wc([1, 2], [10, 11])
+        process.ctx.mag_scan_wc = _mock_mag_scan_wc([1, 2], [10, 11])
 
         with patch('lordcapulet.workflows.global_constrained_search.aiida_propose_occ_matrices_from_results',
                    return_value=_stored_list([101, 102, 103])), \
              patch.object(process, 'report'):
-            process.process_afm_results()
+            process.process_mag_scan_results()
 
         assert process.ctx.N_cumulative == 0
 
@@ -415,15 +523,15 @@ class TestProcessAfmResults:
         self, generate_workchain, generate_structure, generate_kpoints_mesh,
         fixture_code, pseudo_family,
     ):
-        """process_afm_results must set ctx.generation = 0."""
+        """process_mag_scan_results must set ctx.generation = 0."""
         process = self._make_process(generate_workchain, generate_structure,
                                      generate_kpoints_mesh, fixture_code, pseudo_family)
-        process.ctx.afm_wc = _mock_afm_wc([1, 2], [10, 11])
+        process.ctx.mag_scan_wc = _mock_mag_scan_wc([1, 2], [10, 11])
 
         with patch('lordcapulet.workflows.global_constrained_search.aiida_propose_occ_matrices_from_results',
                    return_value=_stored_list([101, 102, 103])), \
              patch.object(process, 'report'):
-            process.process_afm_results()
+            process.process_mag_scan_results()
 
         assert process.ctx.generation == 0
 
@@ -431,19 +539,19 @@ class TestProcessAfmResults:
         self, generate_workchain, generate_structure, generate_kpoints_mesh,
         fixture_code, pseudo_family,
     ):
-        """process_afm_results must populate ctx.generation_results[0] with AFM data."""
+        """process_mag_scan_results must populate ctx.generation_results[0] with magnetic scan data."""
         process = self._make_process(generate_workchain, generate_structure,
                                      generate_kpoints_mesh, fixture_code, pseudo_family)
-        process.ctx.afm_wc = _mock_afm_wc([1, 2], [10, 11])
+        process.ctx.mag_scan_wc = _mock_mag_scan_wc([1, 2], [10, 11])
 
         with patch('lordcapulet.workflows.global_constrained_search.aiida_propose_occ_matrices_from_results',
                    return_value=_stored_list([101, 102, 103])), \
              patch.object(process, 'report'):
-            process.process_afm_results()
+            process.process_mag_scan_results()
 
         assert 0 in process.ctx.generation_results
         gen0 = process.ctx.generation_results[0]
-        assert gen0['type'] == 'afm'
+        assert gen0['type'] == 'mag_scan'
         assert gen0['n_calculations'] == 2
         assert gen0['converged_matrix_pks'] == [1, 2]
         assert gen0['converged_calculation_pks'] == [10, 11]
@@ -455,12 +563,12 @@ class TestProcessAfmResults:
         """ctx.converged_matrix_pks should be seeded with the AFM matrix PKs."""
         process = self._make_process(generate_workchain, generate_structure,
                                      generate_kpoints_mesh, fixture_code, pseudo_family)
-        process.ctx.afm_wc = _mock_afm_wc([1, 2], [10, 11])
+        process.ctx.mag_scan_wc = _mock_mag_scan_wc([1, 2], [10, 11])
 
         with patch('lordcapulet.workflows.global_constrained_search.aiida_propose_occ_matrices_from_results',
                    return_value=_stored_list([101, 102, 103])), \
              patch.object(process, 'report'):
-            process.process_afm_results()
+            process.process_mag_scan_results()
 
         assert process.ctx.converged_matrix_pks == [1, 2]
 
@@ -471,12 +579,12 @@ class TestProcessAfmResults:
         """ctx.all_calculation_pks should be seeded with the AFM calculation PKs."""
         process = self._make_process(generate_workchain, generate_structure,
                                      generate_kpoints_mesh, fixture_code, pseudo_family)
-        process.ctx.afm_wc = _mock_afm_wc([1, 2], [10, 11], all_calc_pks=[10, 11])
+        process.ctx.mag_scan_wc = _mock_mag_scan_wc([1, 2], [10, 11], all_calc_pks=[10, 11])
 
         with patch('lordcapulet.workflows.global_constrained_search.aiida_propose_occ_matrices_from_results',
                    return_value=_stored_list([101, 102, 103])), \
              patch.object(process, 'report'):
-            process.process_afm_results()
+            process.process_mag_scan_results()
 
         assert process.ctx.all_calculation_pks == [10, 11]
 
@@ -484,15 +592,15 @@ class TestProcessAfmResults:
         self, generate_workchain, generate_structure, generate_kpoints_mesh,
         fixture_code, pseudo_family,
     ):
-        """process_afm_results must invoke aiida_propose_occ_matrices_from_results exactly once."""
+        """process_mag_scan_results must invoke aiida_propose_occ_matrices_from_results exactly once."""
         process = self._make_process(generate_workchain, generate_structure,
                                      generate_kpoints_mesh, fixture_code, pseudo_family)
-        process.ctx.afm_wc = _mock_afm_wc([1, 2], [10, 11])
+        process.ctx.mag_scan_wc = _mock_mag_scan_wc([1, 2], [10, 11])
 
         with patch('lordcapulet.workflows.global_constrained_search.aiida_propose_occ_matrices_from_results',
                    return_value=_stored_list([101, 102, 103])) as mock_propose, \
              patch.object(process, 'report'):
-            process.process_afm_results()
+            process.process_mag_scan_results()
 
         assert mock_propose.called
         assert mock_propose.call_count == 1
@@ -504,13 +612,13 @@ class TestProcessAfmResults:
         """ctx.current_proposals must equal the list returned by the proposal function."""
         process = self._make_process(generate_workchain, generate_structure,
                                      generate_kpoints_mesh, fixture_code, pseudo_family)
-        process.ctx.afm_wc = _mock_afm_wc([1, 2], [10, 11])
+        process.ctx.mag_scan_wc = _mock_mag_scan_wc([1, 2], [10, 11])
         proposals = [301, 302, 303]
 
         with patch('lordcapulet.workflows.global_constrained_search.aiida_propose_occ_matrices_from_results',
                    return_value=_stored_list(proposals)), \
              patch.object(process, 'report'):
-            process.process_afm_results()
+            process.process_mag_scan_results()
 
         assert process.ctx.current_proposals == proposals
 
@@ -518,18 +626,44 @@ class TestProcessAfmResults:
         self, generate_workchain, generate_structure, generate_kpoints_mesh,
         fixture_code, pseudo_family,
     ):
-        """process_afm_results must return ERROR_AFM_SEARCH_FAILED when afm_wc fails."""
+        """process_mag_scan_results must return ERROR_MAG_SCAN_FAILED when afm_wc fails."""
         process = self._make_process(generate_workchain, generate_structure,
                                      generate_kpoints_mesh, fixture_code, pseudo_family)
         failed_wc = MagicMock()
         failed_wc.is_finished_ok = False
         failed_wc.exit_status = 1
-        process.ctx.afm_wc = failed_wc
+        process.ctx.mag_scan_wc = failed_wc
 
         with patch.object(process, 'report'):
-            result = process.process_afm_results()
+            result = process.process_mag_scan_results()
 
-        assert result == process.exit_codes.ERROR_AFM_SEARCH_FAILED
+        assert result == process.exit_codes.ERROR_MAG_SCAN_FAILED
+
+    def test_current_generation_always_forwarded_to_proposal_function(
+        self, generate_workchain, generate_structure, generate_kpoints_mesh,
+        fixture_code, pseudo_family,
+    ):
+        """current_generation must be forwarded even when proposal_kwargs is absent.
+
+        Regression test: previously current_generation was only added inside the
+        ``if 'proposal_kwargs' in self.inputs`` guard.  When no proposal_kwargs
+        was provided (e.g. random_so_n mode) current_generation was silently
+        dropped, causing an AssertionError in GP mode on the first proposal call.
+        """
+        process = self._make_process(generate_workchain, generate_structure,
+                                     generate_kpoints_mesh, fixture_code, pseudo_family)
+        process.ctx.mag_scan_wc = _mock_mag_scan_wc([1, 2], [10, 11])
+
+        with patch('lordcapulet.workflows.global_constrained_search.aiida_propose_occ_matrices_from_results',
+                   return_value=_stored_list([101, 102, 103])) as mock_propose, \
+             patch.object(process, 'report'):
+            process.process_mag_scan_results()
+
+        _, call_kwargs = mock_propose.call_args
+        assert 'current_generation' in call_kwargs, (
+            'current_generation must always be forwarded to the proposal function'
+        )
+        assert call_kwargs['current_generation'].value == 0
 
 
 class TestRunConstrainedBatch:
@@ -723,7 +857,7 @@ class TestProcessConstrainedResults:
         process.ctx.all_calculation_pks = list(all_calc_pks or [10])
         # generation_results[0] represents the AFM generation (type='afm')
         process.ctx.generation_results = {
-            0: {'type': 'afm', 'n_calculations': 1,
+            0: {'type': 'mag_scan', 'n_calculations': 1,
                 'converged_matrix_pks': [1], 'converged_calculation_pks': [10]}
         }
 
@@ -876,7 +1010,7 @@ class TestGatherFinalResults:
         process.ctx.converged_calculation_pks = [10, 11, 12]
         process.ctx.all_calculation_pks = [10, 11, 12]
         process.ctx.generation_results = {
-            0: {'type': 'afm', 'n_calculations': 2,
+            0: {'type': 'mag_scan', 'n_calculations': 2,
                 'converged_matrix_pks': [1, 2], 'converged_calculation_pks': [10, 11]},
             1: {'type': 'constrained', 'n_calculations': 3, 'n_successful': 1,
                 'n_failed': 2, 'matrix_pks': [3], 'calculation_pks': [10, 11, 12],

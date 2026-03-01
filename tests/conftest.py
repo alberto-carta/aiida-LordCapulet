@@ -262,7 +262,7 @@ def generate_workchain():
 
     Usage::
 
-        process = generate_workchain('lordcapulet.afm_scan', inputs)
+        process = generate_workchain('lordcapulet.standard_magnetic_scan', inputs)
         process = generate_workchain(GlobalConstrainedSearchWorkChain, inputs)
     """
 
@@ -354,7 +354,7 @@ def generate_upf_data():
 def pseudo_family(generate_upf_data):
     """Session-scoped SSSP/1.3/PBEsol/efficiency pseudo-potential family.
 
-    Both ``AFMScanWorkChain`` and ``ConstrainedScanWorkChain`` hard-code a
+    Both ``StandardMagneticScanWorkChain`` and ``ConstrainedScanWorkChain`` hard-code a
     ``load_group('SSSP/1.3/PBEsol/efficiency')`` call inside ``run_all``.
     This fixture pre-populates the ephemeral profile with a family of that
     exact label so those lookups succeed at test time.
@@ -409,7 +409,7 @@ def pseudo_family(generate_upf_data):
 def make_finished_calc_node(fixture_localhost):
     """Factory fixture: create a stored ``CalcJobNode`` that looks finished.
 
-    ``gather_results`` in both ``AFMScanWorkChain`` and
+    ``gather_results`` in both ``StandardMagneticScanWorkChain`` and
     ``ConstrainedScanWorkChain`` iterates over ``ctx.calcs`` and, for each
     node, calls ``load_node(calc.pk)`` and then checks
     ``fresh_calc.is_finished`` and ``fresh_calc.exit_status``.  To exercise

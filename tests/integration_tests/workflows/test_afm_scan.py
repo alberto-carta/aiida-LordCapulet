@@ -1,4 +1,4 @@
-"""Tests for the ``AFMScanWorkChain`` class."""
+"""Tests for the ``StandardMagneticScanWorkChain`` class."""
 
 import pytest
 from unittest.mock import patch, MagicMock
@@ -10,15 +10,15 @@ from aiida.orm import Dict, Float, List, Code, KpointsData
 # Shared helpers
 # ---------------------------------------------------------------------------
 
-def _afm_inputs(structure, kpoints, code, tm_atoms=None):
-    """Minimal valid AFMScanWorkChain inputs dict."""
+def _afm_inputs(structure, kpoints, code, hubbard_corr_atoms=None):
+    """Minimal valid StandardMagneticScanWorkChain inputs dict."""
     return {
         'structure': structure,
         'parameters': Dict({'CONTROL': {'calculation': 'scf'},
                             'SYSTEM': {'ecutwfc': 30, 'ecutrho': 240, 'nspin': 2}}),
         'kpoints': kpoints,
         'code': code,
-        'tm_atoms': List(list=tm_atoms or ['Fe']),
+        'hubbard_corr_atoms': List(list=hubbard_corr_atoms or ['Fe']),
     }
 
 
@@ -60,21 +60,21 @@ class TestAFMScanDefine:
             'parameters': Dict({'CONTROL': {'calculation': 'scf'}, 'SYSTEM': {'ecutwfc': 30, 'ecutrho': 240, 'nspin': 2}}),
             'kpoints': kpoints,
             'code': code,
-            'tm_atoms': List(list=['Fe']),
+            'hubbard_corr_atoms': List(list=['Fe']),
             'magnitude': Float(0.5),
             'walltime_hours': Float(1.0),
         }
 
-        process = generate_workchain('lordcapulet.afm_scan', inputs)
+        process = generate_workchain('lordcapulet.standard_magnetic_scan', inputs)
 
         # Check that the process was created
         assert process is not None
 
     def test_outputs_defined(self):
         """Verify all expected outputs are defined in the spec."""
-        from lordcapulet.workflows.afm_scan import AFMScanWorkChain
+        from lordcapulet.workflows.standard_magnetic_scan import StandardMagneticScanWorkChain
 
-        spec = AFMScanWorkChain.spec()
+        spec = StandardMagneticScanWorkChain.spec()
 
         assert 'converged_matrix_pks' in spec.outputs
         assert 'converged_calculation_pks' in spec.outputs
@@ -95,10 +95,10 @@ class TestAFMScanPrepareConfigs:
             'parameters': Dict({'CONTROL': {'calculation': 'scf'}, 'SYSTEM': {'ecutwfc': 30, 'ecutrho': 240, 'nspin': 2}}),
             'kpoints': kpoints,
             'code': code,
-            'tm_atoms': List(list=['Fe']),
+            'hubbard_corr_atoms': List(list=['Fe']),
         }
 
-        process = generate_workchain('lordcapulet.afm_scan', inputs)
+        process = generate_workchain('lordcapulet.standard_magnetic_scan', inputs)
         process.prepare_configs()
 
         assert len(process.ctx.magnetic_configs) == 2
@@ -114,10 +114,10 @@ class TestAFMScanPrepareConfigs:
             'parameters': Dict({'CONTROL': {'calculation': 'scf'}, 'SYSTEM': {'ecutwfc': 30, 'ecutrho': 240, 'nspin': 2}}),
             'kpoints': kpoints,
             'code': code,
-            'tm_atoms': List(list=['Fe1', 'Fe2']),
+            'hubbard_corr_atoms': List(list=['Fe1', 'Fe2']),
         }
 
-        process = generate_workchain('lordcapulet.afm_scan', inputs)
+        process = generate_workchain('lordcapulet.standard_magnetic_scan', inputs)
         process.prepare_configs()
 
         assert len(process.ctx.magnetic_configs) == 4
@@ -133,10 +133,10 @@ class TestAFMScanPrepareConfigs:
             'parameters': Dict({'CONTROL': {'calculation': 'scf'}, 'SYSTEM': {'ecutwfc': 30, 'ecutrho': 240, 'nspin': 2}}),
             'kpoints': kpoints,
             'code': code,
-            'tm_atoms': List(list=['Fe1', 'Fe2', 'Ni1']),
+            'hubbard_corr_atoms': List(list=['Fe1', 'Fe2', 'Ni1']),
         }
 
-        process = generate_workchain('lordcapulet.afm_scan', inputs)
+        process = generate_workchain('lordcapulet.standard_magnetic_scan', inputs)
         process.prepare_configs()
 
         assert len(process.ctx.magnetic_configs) == 8
@@ -152,11 +152,11 @@ class TestAFMScanPrepareConfigs:
             'parameters': Dict({'CONTROL': {'calculation': 'scf'}, 'SYSTEM': {'ecutwfc': 30, 'ecutrho': 240, 'nspin': 2}}),
             'kpoints': kpoints,
             'code': code,
-            'tm_atoms': List(list=['Fe1', 'Fe2']),
+            'hubbard_corr_atoms': List(list=['Fe1', 'Fe2']),
             'magnitude': Float(0.5),
         }
 
-        process = generate_workchain('lordcapulet.afm_scan', inputs)
+        process = generate_workchain('lordcapulet.standard_magnetic_scan', inputs)
         process.prepare_configs()
 
         # Extract sign patterns (positive or negative for each atom)
@@ -180,11 +180,11 @@ class TestAFMScanPrepareConfigs:
             'parameters': Dict({'CONTROL': {'calculation': 'scf'}, 'SYSTEM': {'ecutwfc': 30, 'ecutrho': 240, 'nspin': 2}}),
             'kpoints': kpoints,
             'code': code,
-            'tm_atoms': List(list=['Fe1', 'Fe2']),
+            'hubbard_corr_atoms': List(list=['Fe1', 'Fe2']),
             'magnitude': Float(magnitude),
         }
 
-        process = generate_workchain('lordcapulet.afm_scan', inputs)
+        process = generate_workchain('lordcapulet.standard_magnetic_scan', inputs)
         process.prepare_configs()
 
         for config in process.ctx.magnetic_configs:
@@ -235,14 +235,14 @@ class TestAFMScanRunAll:
         # ``prepare_configs`` populates ``ctx.magnetic_configs`` with 2^1 = 2
         # entries, which run_all must iterate over exactly once each.
         process = generate_workchain(
-            'lordcapulet.afm_scan',
-            _afm_inputs(structure, kpoints, code, tm_atoms=['Fe']),
+            'lordcapulet.standard_magnetic_scan',
+            _afm_inputs(structure, kpoints, code, hubbard_corr_atoms=['Fe']),
         )
         process.prepare_configs()  # builds ctx.magnetic_configs (2 configs)
 
         fake_future = MagicMock()
         with patch.object(process, 'submit', return_value=fake_future) as mock_submit, \
-             patch('lordcapulet.workflows.afm_scan.append_'), \
+             patch('lordcapulet.workflows.standard_magnetic_scan.append_'), \
              patch.object(process, 'to_context'), \
              patch.object(process, 'report'):  # see class docstring for why each patch is needed
             process.run_all()
@@ -261,14 +261,14 @@ class TestAFMScanRunAll:
         # 2 TM atoms gives 2^2 = 4 magnetic configurations, so run_all must
         # call submit 4 times (once per configuration).
         process = generate_workchain(
-            'lordcapulet.afm_scan',
-            _afm_inputs(structure, kpoints, code, tm_atoms=['Fe1', 'Fe2']),
+            'lordcapulet.standard_magnetic_scan',
+            _afm_inputs(structure, kpoints, code, hubbard_corr_atoms=['Fe1', 'Fe2']),
         )
         process.prepare_configs()
 
         fake_future = MagicMock()
         with patch.object(process, 'submit', return_value=fake_future) as mock_submit, \
-             patch('lordcapulet.workflows.afm_scan.append_'), \
+             patch('lordcapulet.workflows.standard_magnetic_scan.append_'), \
              patch.object(process, 'to_context'), \
              patch.object(process, 'report'):
             process.run_all()
@@ -285,8 +285,8 @@ class TestAFMScanRunAll:
         code = fixture_code('quantumespresso.pw')
 
         process = generate_workchain(
-            'lordcapulet.afm_scan',
-            _afm_inputs(structure, kpoints, code, tm_atoms=['Fe1', 'Fe2']),
+            'lordcapulet.standard_magnetic_scan',
+            _afm_inputs(structure, kpoints, code, hubbard_corr_atoms=['Fe1', 'Fe2']),
         )
         process.prepare_configs()
 
@@ -304,7 +304,7 @@ class TestAFMScanRunAll:
             return MagicMock()
 
         with patch.object(process, 'submit', side_effect=_capture), \
-             patch('lordcapulet.workflows.afm_scan.append_'), \
+             patch('lordcapulet.workflows.standard_magnetic_scan.append_'), \
              patch.object(process, 'to_context'), \
              patch.object(process, 'report'):
             process.run_all()
@@ -331,7 +331,7 @@ class TestAFMScanGatherResults:
       so ``node.is_finished`` and ``node.exit_status`` return the expected
       values without the plumpy engine having run.
 
-    * ``patch('lordcapulet.workflows.afm_scan.extract_occupations_from_calc')``
+    * ``patch('lordcapulet.workflows.standard_magnetic_scan.extract_occupations_from_calc')``
       - replaces the parser that normally reads binary/text QE output files
       with a function returning a ready-made ``OccupationMatrixData`` object.
       This avoids the need for real QE output files in the test suite.
@@ -347,7 +347,7 @@ class TestAFMScanGatherResults:
         kpoints = generate_kpoints_mesh(4)
         code = fixture_code('quantumespresso.pw')
         return generate_workchain(
-            'lordcapulet.afm_scan',
+            'lordcapulet.standard_magnetic_scan',
             _afm_inputs(structure, kpoints, code),
         )
 
@@ -362,7 +362,7 @@ class TestAFMScanGatherResults:
         process.ctx.calcs = [calc]
 
         outputs, capture = _capture_out_factory()
-        with patch('lordcapulet.workflows.afm_scan.extract_occupations_from_calc',
+        with patch('lordcapulet.workflows.standard_magnetic_scan.extract_occupations_from_calc',
                    return_value=_mock_occ()), \
              patch.object(process, 'out', side_effect=capture), \
              patch.object(process, 'report'):
@@ -384,7 +384,7 @@ class TestAFMScanGatherResults:
         process.ctx.calcs = [calc1, calc2]
 
         outputs, capture = _capture_out_factory()
-        with patch('lordcapulet.workflows.afm_scan.extract_occupations_from_calc',
+        with patch('lordcapulet.workflows.standard_magnetic_scan.extract_occupations_from_calc',
                    return_value=_mock_occ()), \
              patch.object(process, 'out', side_effect=capture), \
              patch.object(process, 'report'):
@@ -412,7 +412,7 @@ class TestAFMScanGatherResults:
         process.ctx.calcs = [calc_ok, calc_fail]
 
         outputs, capture = _capture_out_factory()
-        with patch('lordcapulet.workflows.afm_scan.extract_occupations_from_calc',
+        with patch('lordcapulet.workflows.standard_magnetic_scan.extract_occupations_from_calc',
                    return_value=_mock_occ()), \
              patch.object(process, 'out', side_effect=capture), \
              patch.object(process, 'report'):
@@ -441,7 +441,7 @@ class TestAFMScanGatherResults:
         calc = make_finished_calc_node(exit_status=0)
         process.ctx.calcs = [calc]
 
-        with patch('lordcapulet.workflows.afm_scan.extract_occupations_from_calc',
+        with patch('lordcapulet.workflows.standard_magnetic_scan.extract_occupations_from_calc',
                    return_value=_mock_occ()), \
              patch.object(process, 'out'), \
              patch.object(process, 'report'):
@@ -466,7 +466,7 @@ class TestAFMScanGatherResults:
         calc_fail = make_finished_calc_node(exit_status=1)
         process.ctx.calcs = [calc_fail]
 
-        with patch('lordcapulet.workflows.afm_scan.extract_occupations_from_calc',
+        with patch('lordcapulet.workflows.standard_magnetic_scan.extract_occupations_from_calc',
                    return_value=_mock_occ()), \
              patch.object(process, 'out'), \
              patch.object(process, 'report'):
@@ -488,7 +488,7 @@ class TestAFMScanGatherResults:
         process.ctx.calcs = [calc]
 
         outputs, capture = _capture_out_factory()
-        with patch('lordcapulet.workflows.afm_scan.extract_occupations_from_calc',
+        with patch('lordcapulet.workflows.standard_magnetic_scan.extract_occupations_from_calc',
                    return_value=_mock_occ()), \
              patch.object(process, 'out', side_effect=capture), \
              patch.object(process, 'report'):

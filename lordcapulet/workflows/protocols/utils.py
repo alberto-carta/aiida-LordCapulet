@@ -18,10 +18,10 @@ What does ProtocolMixin do?
 be used on its own, but to be combined with ``WorkChain`` via multiple
 inheritance::
 
-    class AFMScanWorkChain(ProtocolMixin, WorkChain):
+    class StandardMagneticScanWorkChain(ProtocolMixin, WorkChain):
         ...
 
-This gives ``AFMScanWorkChain`` all of AiiDA's workchain machinery (from
+This gives ``StandardMagneticScanWorkChain`` all of AiiDA's workchain machinery (from
 ``WorkChain``) *plus* the YAML-loading methods (from ``ProtocolMixin``)
 without duplicating any code.  Python resolves method names left-to-right
 through the two parents, but there is no overlap between them.
@@ -41,7 +41,7 @@ Merge order (later entries take priority)
 -----------------------------------------
 1. ``common.yaml`` ``default_inputs`` - shared DFT defaults used by every
    workchain (pseudo family, k-points mesh, ecutwfc, smearing, …).
-2. Workchain-specific YAML (e.g. ``afm_scan.yaml``) top-level keys - values
+2. Workchain-specific YAML (e.g. ``standard_magnetic_scan.yaml``) top-level keys - values
    that apply to this workchain regardless of which protocol is chosen
    (e.g. the default ``magnitude`` for the AFM scan).
 3. Protocol section inside the workchain YAML (e.g. ``protocols.default``) -
@@ -53,7 +53,7 @@ Merge order (later entries take priority)
 Example
 -------
 ``common.yaml`` sets ``parameters.SYSTEM.ecutwfc = 60``.
-``afm_scan.yaml`` sets ``walltime_hours = 2.0``.
+``standard_magnetic_scan.yaml`` sets ``walltime_hours = 2.0``.
 The caller passes ``overrides={'walltime_hours': 1.0}``.
 Result: ecutwfc=60 (from common), walltime_hours=1.0 (caller wins over YAML).
 """
@@ -95,7 +95,7 @@ class ProtocolMixin:
     -----
     Inherit from both ``ProtocolMixin`` and ``WorkChain``::
 
-        class AFMScanWorkChain(ProtocolMixin, WorkChain):
+        class StandardMagneticScanWorkChain(ProtocolMixin, WorkChain):
             ...
 
     Then implement two classmethods in the workchain:
@@ -125,7 +125,7 @@ class ProtocolMixin:
 
             from importlib_resources import files
             import lordcapulet.workflows.protocols as pkg
-            return files(pkg) / 'afm_scan.yaml'
+            return files(pkg) / 'standard_magnetic_scan.yaml'
         """
         raise NotImplementedError(
             f"{cls.__name__} must implement get_protocol_filepath()"
@@ -165,7 +165,7 @@ class ProtocolMixin:
         Useful for discovering what named presets are available before
         calling ``get_builder_from_protocol``::
 
-            AFMScanWorkChain.get_available_protocols()
+            StandardMagneticScanWorkChain.get_available_protocols()
             # → {'default': 'Standard AFM scan with moderate cutoffs'}
         """
         _, wc_data = cls._load_raw_yaml()

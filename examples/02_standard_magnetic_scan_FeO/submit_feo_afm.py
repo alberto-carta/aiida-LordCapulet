@@ -2,7 +2,7 @@
 import aiida
 from aiida.orm import load_node
 from aiida.engine import submit
-from lordcapulet.workflows import AFMScanWorkChain
+from lordcapulet.workflows import StandardMagneticScanWorkChain
 from lordcapulet.utils import prepare_tm_info, prepare_hubbard_structure
 from ase.io import read
 
@@ -14,18 +14,18 @@ atoms = read('../FeO.scf.in', format='espresso-in')  # Adjust path as needed
 
 #%%
 # tag transition metal atoms and get their manifolds and dimensions
-tm_atoms, tm_manifolds, tm_dimensions = prepare_tm_info(atoms, table={'Fe'})
+hubbard_corr_atoms, hubbard_corr_manifolds, hubbard_corr_dimensions = prepare_tm_info(atoms, table={'Fe'})
 
 # print tags
-print("Tagged transition atoms:", tm_atoms)
-print("Corresponding manifolds:", tm_manifolds)
-print("Corresponding dimensions:", tm_dimensions)
-print("Total dimensions:", sum(tm_dimensions))
+print("Tagged transition atoms:", hubbard_corr_atoms)
+print("Corresponding manifolds:", hubbard_corr_manifolds)
+print("Corresponding dimensions:", hubbard_corr_dimensions)
+print("Total dimensions:", sum(hubbard_corr_dimensions))
 
 # u_values can be a single float (same U for all TM sites) or a per-atom
 # list with one entry per site, e.g. u_values=[5.0, 4.0]
 hubbard_structure = prepare_hubbard_structure(
-    atoms, tm_atoms, tm_manifolds, U_values=5.0
+    atoms, hubbard_corr_atoms, hubbard_corr_manifolds, U_values=5.0
 )
 
 code = aiida.orm.load_code('pwx_const@daint-general')  # Adjust to your code
@@ -60,12 +60,12 @@ code = aiida.orm.load_code('pwx_const@daint-general')  # Adjust to your code
 #     },
 # })
 #
-# builder = AFMScanWorkChain.get_builder()
+# builder = StandardMagneticScanWorkChain.get_builder()
 # builder.code = code
 # builder.structure = hubbard_structure
 # builder.kpoints = kpoints
 # builder.parameters = parameters
-# builder.tm_atoms = List(list=tm_atoms)
+# builder.hubbard_corr_atoms = List(list=hubbard_corr_atoms)
 # builder.magnitude = Float(0.5)          # magnetisation magnitude per site
 # builder.walltime_hours = Float(1.0)     # walltime in hours
 # builder.pseudo_family_string = Str('SSSP/1.3/PBEsol/efficiency')
@@ -84,12 +84,12 @@ code = aiida.orm.load_code('pwx_const@daint-general')  # Adjust to your code
 #   'walltime_hours'            - hours per calculation (default 2.0)
 #   'pseudo_family'             - aiida-pseudo group label
 #   'parameters'                - nested QE namelist overrides
-builder = AFMScanWorkChain.get_builder_from_protocol(
+builder = StandardMagneticScanWorkChain.get_builder_from_protocol(
     code=code,
     structure=hubbard_structure,
-    tm_atoms=tm_atoms,
+    hubbard_corr_atoms=hubbard_corr_atoms,
     overrides={
-        # 'kpoints_mesh': [3, 3, 3],
+        'kpoints_mesh': [3, 4, 3],
         # 'kpoints_distance': 0.5,  # alternative to fixed mesh
         'walltime_hours': 1.0,
         'parameters': {
@@ -102,7 +102,7 @@ builder = AFMScanWorkChain.get_builder_from_protocol(
 # Submit the workchain
 workchain = submit(builder)
 
-print(f"Submitted AFMScanWorkChain with PK: {workchain.pk}")
+print(f"Submitted StandardMagneticScanWorkChain with PK: {workchain.pk}")
 print(f"Monitor progress with: verdi process status {workchain.pk}")
 
 # create a file and save information about the workchain for postprocessing
@@ -133,4 +133,5 @@ data = extractor.extract_from_workchain(workchain_pk)
 
 # Save to JSON
 extractor.save_to_json(data, f"{material_name}_afm_scan.json")
+
 

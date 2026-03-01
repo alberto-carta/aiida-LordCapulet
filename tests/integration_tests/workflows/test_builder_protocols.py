@@ -2,16 +2,16 @@
 
 Covers:
 - ``make_kpoints``  - density mode and explicit-mesh mode
-- ``AFMScanWorkChain.get_builder_from_protocol``
+- ``StandardMagneticScanWorkChain.get_builder_from_protocol``
     * builder field values match the YAML protocol inputs
     * equivalent to an equivalent manually assembled builder
     * overrides propagate correctly (scalar and nested)
 - ``ConstrainedScanWorkChain.get_builder_from_protocol``
-    * ``n_oscdft`` is auto-computed from tm_atoms
+    * ``n_oscdft`` is auto-computed from hubbard_corr_atoms
     * oscdft_card overrides work
 - ``GlobalConstrainedSearchWorkChain.get_builder_from_protocol``
-    * AFM + constrained sub-workchain fields come from their respective YAML
-    * 'afm' override routes only to the AFM namespace
+    * magnetic scan + constrained sub-workchain fields come from their respective YAML
+    * 'mag_scan' override routes only to the mag_scan namespace
     * 'constrained' override routes only to the constrained namespace
     * top-level overrides set Nmax, N, etc.
 
@@ -24,7 +24,7 @@ from importlib_resources import files
 from aiida.orm import Dict, Float, List, Str, KpointsData, Int
 
 import lordcapulet.workflows.protocols as protocols_pkg
-from lordcapulet.workflows.afm_scan import AFMScanWorkChain
+from lordcapulet.workflows.standard_magnetic_scan import StandardMagneticScanWorkChain
 from lordcapulet.workflows.constrained_scan import ConstrainedScanWorkChain
 from lordcapulet.workflows.global_constrained_search import GlobalConstrainedSearchWorkChain
 from lordcapulet.workflows.protocols.utils import make_kpoints
@@ -88,43 +88,43 @@ class TestMakeKpoints:
 
 
 # ---------------------------------------------------------------------------
-# AFMScanWorkChain.get_builder_from_protocol
+# StandardMagneticScanWorkChain.get_builder_from_protocol
 # ---------------------------------------------------------------------------
 
-class TestAFMBuilderFromProtocol:
+class TestMagScanBuilderFromProtocol:
     """Builder values must match what ``get_protocol_inputs`` returns."""
 
     @pytest.fixture
-    def afm_builder(self, fixture_code, generate_structure):
+    def mag_scan_builder(self, fixture_code, generate_structure):
         code = fixture_code('quantumespresso.pw')
         structure = generate_structure('feo')
-        return AFMScanWorkChain.get_builder_from_protocol(
+        return StandardMagneticScanWorkChain.get_builder_from_protocol(
             code, structure, ['Fe1']
         )
 
     @pytest.fixture
-    def afm_inputs(self):
-        return AFMScanWorkChain.get_protocol_inputs('default')
+    def mag_scan_inputs(self):
+        return StandardMagneticScanWorkChain.get_protocol_inputs('default')
 
     # -- agreement with protocol inputs ---
 
-    def test_parameters_match_protocol(self, afm_builder, afm_inputs):
-        assert afm_builder.parameters.get_dict() == afm_inputs['parameters']
+    def test_parameters_match_protocol(self, mag_scan_builder, mag_scan_inputs):
+        assert mag_scan_builder.parameters.get_dict() == mag_scan_inputs['parameters']
 
-    def test_magnitude_matches_protocol(self, afm_builder, afm_inputs):
-        assert float(afm_builder.magnitude) == pytest.approx(afm_inputs['magnitude'])
+    def test_magnitude_matches_protocol(self, mag_scan_builder, mag_scan_inputs):
+        assert float(mag_scan_builder.magnitude) == pytest.approx(mag_scan_inputs['magnitude'])
 
-    def test_walltime_matches_protocol(self, afm_builder, afm_inputs):
-        assert float(afm_builder.walltime_hours) == pytest.approx(afm_inputs['walltime_hours'])
+    def test_walltime_matches_protocol(self, mag_scan_builder, mag_scan_inputs):
+        assert float(mag_scan_builder.walltime_hours) == pytest.approx(mag_scan_inputs['walltime_hours'])
 
-    def test_pseudo_family_string_matches_protocol(self, afm_builder, afm_inputs):
-        assert afm_builder.pseudo_family_string.value == afm_inputs['pseudo_family']
+    def test_pseudo_family_string_matches_protocol(self, mag_scan_builder, mag_scan_inputs):
+        assert mag_scan_builder.pseudo_family_string.value == mag_scan_inputs['pseudo_family']
 
-    def test_tm_atoms_preserved(self, afm_builder):
-        assert afm_builder.tm_atoms.get_list() == ['Fe1']
+    def test_tm_atoms_preserved(self, mag_scan_builder):
+        assert mag_scan_builder.hubbard_corr_atoms.get_list() == ['Fe1']
 
-    def test_kpoints_is_valid(self, afm_builder):
-        mesh, _ = afm_builder.kpoints.get_kpoints_mesh()
+    def test_kpoints_is_valid(self, mag_scan_builder):
+        mesh, _ = mag_scan_builder.kpoints.get_kpoints_mesh()
         assert all(m > 0 for m in mesh)
 
     # -- equivalence with manually assembled builder ---
@@ -133,21 +133,21 @@ class TestAFMBuilderFromProtocol:
         """Protocol builder and manually assembled builder must agree on all DFT fields."""
         code = fixture_code('quantumespresso.pw')
         structure = generate_structure('feo')
-        tm_atoms = ['Fe1']
+        hubbard_corr_atoms = ['Fe1']
 
-        inputs = AFMScanWorkChain.get_protocol_inputs('default')
+        inputs = StandardMagneticScanWorkChain.get_protocol_inputs('default')
         kpoints = make_kpoints(inputs, structure)
 
         # Protocol-driven builder
-        pb = AFMScanWorkChain.get_builder_from_protocol(code, structure, tm_atoms)
+        pb = StandardMagneticScanWorkChain.get_builder_from_protocol(code, structure, hubbard_corr_atoms)
 
         # Manually assembled
-        mb = AFMScanWorkChain.get_builder()
+        mb = StandardMagneticScanWorkChain.get_builder()
         mb.code = code
         mb.structure = structure
         mb.kpoints = kpoints
         mb.parameters = Dict(dict=inputs['parameters'])
-        mb.tm_atoms = List(list=tm_atoms)
+        mb.hubbard_corr_atoms = List(list=hubbard_corr_atoms)
         mb.magnitude = Float(inputs['magnitude'])
         mb.walltime_hours = Float(inputs['walltime_hours'])
         mb.pseudo_family_string = Str(inputs['pseudo_family'])
@@ -156,14 +156,14 @@ class TestAFMBuilderFromProtocol:
         assert float(pb.magnitude) == pytest.approx(float(mb.magnitude))
         assert float(pb.walltime_hours) == pytest.approx(float(mb.walltime_hours))
         assert pb.pseudo_family_string.value == mb.pseudo_family_string.value
-        assert pb.tm_atoms.get_list() == mb.tm_atoms.get_list()
+        assert pb.hubbard_corr_atoms.get_list() == mb.hubbard_corr_atoms.get_list()
 
     # -- override propagation ---
 
     def test_walltime_override_propagates(self, fixture_code, generate_structure):
         code = fixture_code('quantumespresso.pw')
         structure = generate_structure('feo')
-        builder = AFMScanWorkChain.get_builder_from_protocol(
+        builder = StandardMagneticScanWorkChain.get_builder_from_protocol(
             code, structure, ['Fe1'],
             overrides={'walltime_hours': 9.5},
         )
@@ -172,7 +172,7 @@ class TestAFMBuilderFromProtocol:
     def test_magnitude_override_propagates(self, fixture_code, generate_structure):
         code = fixture_code('quantumespresso.pw')
         structure = generate_structure('feo')
-        builder = AFMScanWorkChain.get_builder_from_protocol(
+        builder = StandardMagneticScanWorkChain.get_builder_from_protocol(
             code, structure, ['Fe1'],
             overrides={'magnitude': 0.9},
         )
@@ -182,14 +182,14 @@ class TestAFMBuilderFromProtocol:
         """Nested SYSTEM override must only change the specified key."""
         code = fixture_code('quantumespresso.pw')
         structure = generate_structure('feo')
-        builder = AFMScanWorkChain.get_builder_from_protocol(
+        builder = StandardMagneticScanWorkChain.get_builder_from_protocol(
             code, structure, ['Fe1'],
             overrides={'parameters': {'SYSTEM': {'ecutwfc': 120.0}}},
         )
         params = builder.parameters.get_dict()
         assert params['SYSTEM']['ecutwfc'] == pytest.approx(120.0)
         # Sibling keys preserved
-        default = AFMScanWorkChain.get_protocol_inputs('default')
+        default = StandardMagneticScanWorkChain.get_protocol_inputs('default')
         assert params['SYSTEM']['ecutrho'] == pytest.approx(
             default['parameters']['SYSTEM']['ecutrho']
         )
@@ -199,7 +199,7 @@ class TestAFMBuilderFromProtocol:
     def test_kpoints_mesh_override_bypasses_density(self, fixture_code, generate_structure):
         code = fixture_code('quantumespresso.pw')
         structure = generate_structure('feo')
-        builder = AFMScanWorkChain.get_builder_from_protocol(
+        builder = StandardMagneticScanWorkChain.get_builder_from_protocol(
             code, structure, ['Fe1'],
             overrides={'kpoints_mesh': [3, 3, 3]},
         )
@@ -209,7 +209,7 @@ class TestAFMBuilderFromProtocol:
     def test_pseudo_family_override_propagates(self, fixture_code, generate_structure):
         code = fixture_code('quantumespresso.pw')
         structure = generate_structure('feo')
-        builder = AFMScanWorkChain.get_builder_from_protocol(
+        builder = StandardMagneticScanWorkChain.get_builder_from_protocol(
             code, structure, ['Fe1'],
             overrides={'pseudo_family': 'mygroup/v1/PBE/efficiency'},
         )
@@ -247,7 +247,7 @@ class TestConstrainedBuilderFromProtocol:
         assert con_builder.pseudo_family_string.value == con_inputs['pseudo_family']
 
     def test_tm_atoms_preserved(self, con_builder):
-        assert con_builder.tm_atoms.get_list() == ['Fe1']
+        assert con_builder.hubbard_corr_atoms.get_list() == ['Fe1']
 
     def test_n_oscdft_computed_for_one_fe(self, con_builder):
         """1 Fe with 3d (5x5x2=50): n_oscdft must be 50."""
@@ -280,18 +280,18 @@ class TestConstrainedBuilderFromProtocol:
 
         code = fixture_code('quantumespresso.pw')
         structure = generate_structure('feo')
-        tm_atoms = ['Fe1']
+        hubbard_corr_atoms = ['Fe1']
 
         inputs = ConstrainedScanWorkChain.get_protocol_inputs('default')
         kpoints = make_kpoints(inputs, structure)
 
-        manifolds = get_default_manifolds(tm_atoms)
+        manifolds = get_default_manifolds(hubbard_corr_atoms)
         n_oscdft = sum(get_dimensions(manifolds))
         oscdft_dict = dict(inputs['oscdft_card'])
         oscdft_dict['n_oscdft'] = n_oscdft
 
         pb = ConstrainedScanWorkChain.get_builder_from_protocol(
-            code, structure, tm_atoms, occupation_matrices_list=[]
+            code, structure, hubbard_corr_atoms, occupation_matrices_list=[]
         )
 
         # Manual builder
@@ -300,7 +300,7 @@ class TestConstrainedBuilderFromProtocol:
         mb.structure = structure
         mb.kpoints = kpoints
         mb.parameters = Dict(dict=inputs['parameters'])
-        mb.tm_atoms = List(list=tm_atoms)
+        mb.hubbard_corr_atoms = List(list=hubbard_corr_atoms)
         mb.occupation_matrices_list = List(list=[])
         mb.oscdft_card = Dict(dict=oscdft_dict)
         mb.walltime_hours = Float(inputs['walltime_hours'])
@@ -354,17 +354,17 @@ class TestGlobalBuilderFromProtocol:
 
     # -- sub-workchain parameters come from their own YAML --
 
-    def test_afm_parameters_match_afm_protocol(self, builder):
-        expected = AFMScanWorkChain.get_protocol_inputs('default')['parameters']
-        assert builder.afm.parameters.get_dict() == expected
+    def test_mag_scan_parameters_match_protocol(self, builder):
+        expected = StandardMagneticScanWorkChain.get_protocol_inputs('default')['parameters']
+        assert builder.mag_scan.parameters.get_dict() == expected
 
     def test_constrained_parameters_match_constrained_protocol(self, builder):
         expected = ConstrainedScanWorkChain.get_protocol_inputs('default')['parameters']
         assert builder.constrained.parameters.get_dict() == expected
 
-    def test_afm_magnitude_from_afm_yaml(self, builder):
-        expected = AFMScanWorkChain.get_protocol_inputs('default')['magnitude']
-        assert float(builder.afm.magnitude) == pytest.approx(expected)
+    def test_mag_scan_magnitude_from_yaml(self, builder):
+        expected = StandardMagneticScanWorkChain.get_protocol_inputs('default')['magnitude']
+        assert float(builder.mag_scan.magnitude) == pytest.approx(expected)
 
     def test_constrained_oscdft_card_defaults(self, builder):
         expected_osc = ConstrainedScanWorkChain.get_protocol_inputs('default')['oscdft_card']
@@ -398,22 +398,22 @@ class TestGlobalBuilderFromProtocol:
         builder = GlobalConstrainedSearchWorkChain.get_builder_from_protocol(
             code, structure, ['Fe1']
         )
-        assert builder.afm.structure.uuid == structure.uuid
+        assert builder.mag_scan.structure.uuid == structure.uuid
         assert builder.constrained.structure.uuid == structure.uuid
 
     # -- override routing --
 
-    def test_afm_override_only_affects_afm_namespace(self, fixture_code, generate_structure):
-        """'afm' override key must route exclusively to the AFM sub-workchain."""
+    def test_mag_scan_override_only_affects_mag_scan_namespace(self, fixture_code, generate_structure):
+        """'mag_scan' override key must route exclusively to the magnetic scan sub-workchain."""
         code = fixture_code('quantumespresso.pw')
         structure = generate_structure('feo')
         default_con_wt = ConstrainedScanWorkChain.get_protocol_inputs('default')['walltime_hours']
 
         builder = GlobalConstrainedSearchWorkChain.get_builder_from_protocol(
             code, structure, ['Fe1'],
-            overrides={'afm': {'walltime_hours': 9.9}},
+            overrides={'mag_scan': {'walltime_hours': 9.9}},
         )
-        assert float(builder.afm.walltime_hours) == pytest.approx(9.9)
+        assert float(builder.mag_scan.walltime_hours) == pytest.approx(9.9)
         assert float(builder.constrained.walltime_hours) == pytest.approx(default_con_wt)
 
     def test_constrained_override_only_affects_constrained_namespace(
@@ -422,14 +422,14 @@ class TestGlobalBuilderFromProtocol:
         """'constrained' override key must route exclusively to constrained sub-chain."""
         code = fixture_code('quantumespresso.pw')
         structure = generate_structure('feo')
-        default_afm_wt = AFMScanWorkChain.get_protocol_inputs('default')['walltime_hours']
+        default_afm_wt = StandardMagneticScanWorkChain.get_protocol_inputs('default')['walltime_hours']
 
         builder = GlobalConstrainedSearchWorkChain.get_builder_from_protocol(
             code, structure, ['Fe1'],
             overrides={'constrained': {'walltime_hours': 8.8}},
         )
         assert float(builder.constrained.walltime_hours) == pytest.approx(8.8)
-        assert float(builder.afm.walltime_hours) == pytest.approx(default_afm_wt)
+        assert float(builder.mag_scan.walltime_hours) == pytest.approx(default_afm_wt)
 
     def test_nmax_override_propagates(self, fixture_code, generate_structure):
         code = fixture_code('quantumespresso.pw')
@@ -449,8 +449,8 @@ class TestGlobalBuilderFromProtocol:
         )
         assert int(builder.N) == 13
 
-    def test_afm_nested_param_override(self, fixture_code, generate_structure):
-        """Nested parameter override inside 'afm' must not affect constrained."""
+    def test_mag_scan_nested_param_override(self, fixture_code, generate_structure):
+        """Nested parameter override inside 'mag_scan' must not affect constrained."""
         code = fixture_code('quantumespresso.pw')
         structure = generate_structure('feo')
         default_con_ecut = ConstrainedScanWorkChain.get_protocol_inputs('default')[
@@ -458,9 +458,9 @@ class TestGlobalBuilderFromProtocol:
 
         builder = GlobalConstrainedSearchWorkChain.get_builder_from_protocol(
             code, structure, ['Fe1'],
-            overrides={'afm': {'parameters': {'SYSTEM': {'ecutwfc': 200.0}}}},
+            overrides={'mag_scan': {'parameters': {'SYSTEM': {'ecutwfc': 200.0}}}},
         )
-        assert builder.afm.parameters.get_dict()['SYSTEM']['ecutwfc'] == pytest.approx(200.0)
+        assert builder.mag_scan.parameters.get_dict()['SYSTEM']['ecutwfc'] == pytest.approx(200.0)
         assert builder.constrained.parameters.get_dict()['SYSTEM']['ecutwfc'] == pytest.approx(
             default_con_ecut
         )
@@ -471,34 +471,34 @@ class TestGlobalBuilderFromProtocol:
         con_code = fixture_code('lordcapulet.constrained_pw')
         structure = generate_structure('feo')
         builder = GlobalConstrainedSearchWorkChain.get_builder_from_protocol(
-            {'afm': afm_code, 'constrained': con_code},
+            {'mag_scan': afm_code, 'constrained': con_code},
             structure,
             ['Fe1'],
         )
-        assert builder.afm.code.uuid == afm_code.uuid
+        assert builder.mag_scan.code.uuid == afm_code.uuid
         assert builder.constrained.code.uuid == con_code.uuid
 
     # -- equivalence: sub-workchain fields == standalone get_builder_from_protocol results --
 
-    def test_afm_fields_match_standalone_afm_builder(self, fixture_code, generate_structure):
-        """Global builder's AFM namespace must be identical to a standalone AFM builder."""
+    def test_mag_scan_fields_match_standalone_mag_scan_builder(self, fixture_code, generate_structure):
+        """Global builder's magnetic scan namespace must be identical to a standalone mag_scan builder."""
         code = fixture_code('quantumespresso.pw')
         structure = generate_structure('feo')
-        tm_atoms = ['Fe1']
+        hubbard_corr_atoms = ['Fe1']
 
         global_builder = GlobalConstrainedSearchWorkChain.get_builder_from_protocol(
-            code, structure, tm_atoms
+            code, structure, hubbard_corr_atoms
         )
-        standalone = AFMScanWorkChain.get_builder_from_protocol(
-            code, structure, tm_atoms
+        standalone = StandardMagneticScanWorkChain.get_builder_from_protocol(
+            code, structure, hubbard_corr_atoms
         )
 
-        assert global_builder.afm.parameters.get_dict() == standalone.parameters.get_dict()
-        assert float(global_builder.afm.magnitude) == pytest.approx(float(standalone.magnitude))
-        assert float(global_builder.afm.walltime_hours) == pytest.approx(
+        assert global_builder.mag_scan.parameters.get_dict() == standalone.parameters.get_dict()
+        assert float(global_builder.mag_scan.magnitude) == pytest.approx(float(standalone.magnitude))
+        assert float(global_builder.mag_scan.walltime_hours) == pytest.approx(
             float(standalone.walltime_hours)
         )
-        assert global_builder.afm.pseudo_family_string.value == standalone.pseudo_family_string.value
+        assert global_builder.mag_scan.pseudo_family_string.value == standalone.pseudo_family_string.value
 
     def test_constrained_fields_match_standalone_constrained_builder(
         self, fixture_code, generate_structure
@@ -506,13 +506,13 @@ class TestGlobalBuilderFromProtocol:
         """Global builder's constrained namespace must match a standalone constrained builder."""
         code = fixture_code('quantumespresso.pw')
         structure = generate_structure('feo')
-        tm_atoms = ['Fe1']
+        hubbard_corr_atoms = ['Fe1']
 
         global_builder = GlobalConstrainedSearchWorkChain.get_builder_from_protocol(
-            code, structure, tm_atoms
+            code, structure, hubbard_corr_atoms
         )
         standalone = ConstrainedScanWorkChain.get_builder_from_protocol(
-            code, structure, tm_atoms, occupation_matrices_list=[]
+            code, structure, hubbard_corr_atoms, occupation_matrices_list=[]
         )
 
         assert global_builder.constrained.parameters.get_dict() == \
@@ -524,3 +524,24 @@ class TestGlobalBuilderFromProtocol:
         assert float(global_builder.constrained.walltime_hours) == pytest.approx(
             float(standalone.walltime_hours)
         )
+
+    def test_proposal_kwargs_override_propagates(self, fixture_code, generate_structure):
+        """proposal_kwargs override must be stored on the builder as a Dict node.
+
+        Regression test: get_builder_from_protocol previously dropped
+        'proposal_kwargs' from overrides (it was merged into global_inputs but
+        never assigned to the builder), so self.inputs.proposal_kwargs was
+        absent at runtime and GP mode always failed with
+        AssertionError: current_generation must be provided.
+        """
+        code = fixture_code('quantumespresso.pw')
+        structure = generate_structure('feo')
+        gp_cfg = {'device': 'cpu', 'mean': {'type': 'VectorizedPhysicsMean'}}
+        builder = GlobalConstrainedSearchWorkChain.get_builder_from_protocol(
+            code, structure, ['Fe1'],
+            overrides={'proposal_kwargs': {'gp_config': gp_cfg}},
+        )
+        assert hasattr(builder, 'proposal_kwargs'), \
+            'proposal_kwargs must be set on the builder when passed in overrides'
+        stored = builder.proposal_kwargs.get_dict()
+        assert stored['gp_config']['device'] == 'cpu'

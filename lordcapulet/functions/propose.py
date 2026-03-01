@@ -25,7 +25,7 @@ def aiida_propose_occ_matrices_from_results(
     debug=False,
     mode='random',*,
     reporter_type='aiida_process',
-    tm_atoms=None, **kwargs):
+    hubbard_corr_atoms=None, **kwargs):
 
     """
     AiiDA calcfunction that takes a list of PKs
@@ -38,7 +38,7 @@ def aiida_propose_occ_matrices_from_results(
     The internal function `propose_new_constraints` should not receive any
     AiiDA specific logic and/or types.
     
-    :param occ_matr_pks: List of PKs to load the occupation matrices from a AFMScanWorkChain or ConstrainedScanWorkChain.
+    :param occ_matr_pks: List of PKs to load the occupation matrices from a StandardMagneticScanWorkChain or ConstrainedScanWorkChain.
     :param N: Int, number of dictionaries to return.
     :param debug: Bool, whether to print debug information.
     :param mode: Mode for selecting the dictionaries, e.g., 'random' or 'read'.
@@ -141,12 +141,12 @@ def aiida_propose_occ_matrices_from_results(
 
 
 
-    # Filter atoms by species if tm_atoms is provided
-    if tm_atoms is not None:
-        tm_atoms_list = tm_atoms.get_list() if hasattr(tm_atoms, 'get_list') else tm_atoms
+    # Filter atoms by species if hubbard_corr_atoms is provided
+    if hubbard_corr_atoms is not None:
+        hubbard_corr_atoms_list = hubbard_corr_atoms.get_list() if hasattr(hubbard_corr_atoms, 'get_list') else hubbard_corr_atoms
         filtered_matrices = []
         for occ_matrix_data in occ_matrices:
-            filtered_data = filter_atoms_by_species(occ_matrix_data, tm_atoms_list)
+            filtered_data = filter_atoms_by_species(occ_matrix_data, hubbard_corr_atoms_list)
             filtered_matrices.append(filtered_data)
         occ_matrices = filtered_matrices
 

@@ -57,13 +57,15 @@ Issues = "https://github.com/alberto-carta/aiida-LordCapulet/issues"
 "lordcapulet.constrained_pw" = "aiida_quantumespresso.tools.calculations.pw:PwCalculationTools"
 
 [project.entry-points."aiida.workflows"]
-"lordcapulet.afm_scan" = "lordcapulet.workflows.afm_scan:AFMScanWorkChain"
+"lordcapulet.standard_magnetic_scan" = "lordcapulet.workflows.standard_magnetic_scan:StandardMagneticScanWorkChain"
+"lordcapulet.afm_scan" = "lordcapulet.workflows.standard_magnetic_scan:StandardMagneticScanWorkChain"
 "lordcapulet.constrained_scan" = "lordcapulet.workflows.constrained_scan:ConstrainedScanWorkChain"
 "lordcapulet.global_constrained_search" = "lordcapulet.workflows.global_constrained_search:GlobalConstrainedSearchWorkChain"
 
 [tool.setuptools.package-data]
 "lordcapulet.workflows.protocols" = ["*.yaml"]
 
+[tool.black]
 line-length = 88
 target-version = ['py38']
 

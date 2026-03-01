@@ -104,16 +104,16 @@ class TestProtocolMixinBase:
 
 
 # =============================================================================
-# AFMScanWorkChain protocol
+# StandardMagneticScanWorkChain protocol
 # =============================================================================
 
 class TestAFMProtocol:
-    """Protocol tests for ``AFMScanWorkChain`` (YAML reading only, no AiiDA)."""
+    """Protocol tests for ``StandardMagneticScanWorkChain`` (YAML reading only, no AiiDA)."""
 
     @pytest.fixture(autouse=True)
     def _import(self):
-        from lordcapulet.workflows.afm_scan import AFMScanWorkChain
-        self.WC = AFMScanWorkChain
+        from lordcapulet.workflows.standard_magnetic_scan import StandardMagneticScanWorkChain
+        self.WC = StandardMagneticScanWorkChain
 
     def test_available_protocols_contains_default(self):
         protocols = self.WC.get_available_protocols()
@@ -283,7 +283,7 @@ class TestGlobalSearchYamlLoading:
         assert 'proposal_mode' in self.data
 
     def test_global_merge_routing(self):
-        """Top-level overrides not named 'afm' or 'constrained' should stay
+        """Top-level overrides not named 'mag_scan' or 'constrained' should stay
         at top-level - verifying the routing logic in get_builder_from_protocol
         keeps them separate from sub-protocol overrides.
 
@@ -295,12 +295,12 @@ class TestGlobalSearchYamlLoading:
         overrides = {
             'Nmax': 99,
             'N': 7,
-            'afm': {'walltime_hours': 3.0},
+            'mag_scan': {'walltime_hours': 3.0},
             'constrained': {'walltime_hours': 4.0},
         }
 
-        global_user = {k: v for k, v in overrides.items() if k not in ('afm', 'constrained')}
-        afm_user = overrides.get('afm', {})
+        global_user = {k: v for k, v in overrides.items() if k not in ('mag_scan', 'constrained')}
+        mag_scan_user = overrides.get('mag_scan', {})
         con_user = overrides.get('constrained', {})
 
         base_global = {'Nmax': 20, 'N': 4}
@@ -308,5 +308,5 @@ class TestGlobalSearchYamlLoading:
 
         assert merged['Nmax'] == 99
         assert merged['N'] == 7
-        assert afm_user == {'walltime_hours': 3.0}
+        assert mag_scan_user == {'walltime_hours': 3.0}
         assert con_user == {'walltime_hours': 4.0}
