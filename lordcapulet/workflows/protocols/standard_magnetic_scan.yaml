@@ -1,0 +1,14 @@
+# Protocol file for StandardMagneticScanWorkChain.
+# These values are merged on top of common.yaml defaults.
+
+default_protocol: default
+
+# AFM-specific defaults (merged over common.yaml)
+magnitude: 0.5          # starting magnetization magnitude (absolute value)
+walltime_hours: 2.0     # hours per AFM calculation
+
+protocols:
+    default:
+        description: >
+            Standard AFM scan: enumerate all 2^N spin configurations and
+            run PW+U calculations, storing converged occupation matrices.

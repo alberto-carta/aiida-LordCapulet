@@ -1,137 +1,97 @@
 #%%
+"""
+Standard magnetic scan for FeO.
+
+Caching: result JSON ({material}_afm_scan.json) acts as the cache marker. On
+first submit a stub JSON with just the workchain PK is written; the extractor
+cell below overwrites it with full results. Re-running reloads the PK from the
+JSON and skips submission. Delete the JSON to force a fresh run.
+"""
+import json
+import os
 import aiida
-from aiida.orm import load_node
 from aiida.engine import submit
 from lordcapulet.workflows import StandardMagneticScanWorkChain
 from lordcapulet.utils import prepare_tm_info, prepare_hubbard_structure
 from ase.io import read
 
-# Load AiiDA profile
 aiida.load_profile()
 
-# load scf file
-atoms = read('../FeO.scf.in', format='espresso-in')  # Adjust path as needed
+material_name = 'FeO'
+JSON_FILE = f"{material_name}_afm_scan.json"
+
+
+def _read_pk_from_json(path):
+    with open(path) as f:
+        return json.load(f)['metadata']['pk']
+
 
 #%%
-# tag transition metal atoms and get their manifolds and dimensions
-hubbard_corr_atoms, hubbard_corr_manifolds, hubbard_corr_dimensions = prepare_tm_info(atoms, table={'Fe'})
+if os.path.exists(JSON_FILE):
+    workchain_pk = _read_pk_from_json(JSON_FILE)
+    print(f"Found existing {JSON_FILE}, skipping submit. PK={workchain_pk}")
+else:
+    atoms = read('../FeO.scf.in', format='espresso-in')
 
-# print tags
-print("Tagged transition atoms:", hubbard_corr_atoms)
-print("Corresponding manifolds:", hubbard_corr_manifolds)
-print("Corresponding dimensions:", hubbard_corr_dimensions)
-print("Total dimensions:", sum(hubbard_corr_dimensions))
+    hubbard_corr_atoms, hubbard_corr_manifolds, hubbard_corr_dimensions = prepare_tm_info(atoms, table={'Fe'})
 
-# u_values can be a single float (same U for all TM sites) or a per-atom
-# list with one entry per site, e.g. u_values=[5.0, 4.0]
-hubbard_structure = prepare_hubbard_structure(
-    atoms, hubbard_corr_atoms, hubbard_corr_manifolds, U_values=5.0
-)
+    print("Tagged transition atoms:", hubbard_corr_atoms)
+    print("Corresponding manifolds:", hubbard_corr_manifolds)
+    print("Corresponding dimensions:", hubbard_corr_dimensions)
+    print("Total dimensions:", sum(hubbard_corr_dimensions))
 
-code = aiida.orm.load_code('pwx_const@daint-general')  # Adjust to your code
-# Use this if you want explicit control over every single input without relying
-# on the YAML defaults.  You are responsible for setting every required field.
-# Uncomment the block below and comment out Option B to use it.
-#
-# from aiida.orm import Dict, KpointsData, List, Float, Str
-#
-# kpoints = KpointsData()
-# kpoints.set_kpoints_mesh([3, 3, 3])
-#
-# parameters = Dict(dict={
-#     'CONTROL': {
-#         'calculation': 'scf',
-#         'restart_mode': 'from_scratch',
-#         'verbosity': 'high',
-#     },
-#     'SYSTEM': {
-#         'ecutwfc': 40.0,
-#         'ecutrho': 480.0,
-#         'occupations': 'smearing',
-#         'smearing': 'cold',
-#         'degauss': 0.02,
-#         'nspin': 2,
-#     },
-#     'ELECTRONS': {
-#         'conv_thr': 1.0e-5,
-#         'mixing_beta': 0.1,
-#         'electron_maxstep': 500,
-#         'mixing_mode': 'local-TF',
-#     },
-# })
-#
-# builder = StandardMagneticScanWorkChain.get_builder()
-# builder.code = code
-# builder.structure = hubbard_structure
-# builder.kpoints = kpoints
-# builder.parameters = parameters
-# builder.hubbard_corr_atoms = List(list=hubbard_corr_atoms)
-# builder.magnitude = Float(0.5)          # magnetisation magnitude per site
-# builder.walltime_hours = Float(1.0)     # walltime in hours
-# builder.pseudo_family_string = Str('SSSP/1.3/PBEsol/efficiency')
+    hubbard_structure = prepare_hubbard_structure(
+        atoms, hubbard_corr_atoms, hubbard_corr_manifolds, U_values=5.0
+    )
 
-# ── Option B: protocol-based builder (recommended) ───────────────────────────
-# All defaults come from the YAML files in lordcapulet/workflows/protocols/.
-# Pass `overrides` as a nested dict to change only what you need; everything
-# else stays at the protocol default.  The k-point mesh is derived
-# automatically from the structure's reciprocal-lattice density unless you
-# explicitly pass 'kpoints_mesh' in overrides.
-#
-# Available overrides (non-exhaustive):
-#   'kpoints_distance'          - spacing in 1/Å  (default 0.4)
-#   'kpoints_mesh'              - explicit [nx,ny,nz] (bypasses density logic)
-#   'magnitude'                 - magnetisation amplitude (default 0.5)
-#   'walltime_hours'            - hours per calculation (default 2.0)
-#   'pseudo_family'             - aiida-pseudo group label
-#   'parameters'                - nested QE namelist overrides
-builder = StandardMagneticScanWorkChain.get_builder_from_protocol(
-    code=code,
-    structure=hubbard_structure,
-    hubbard_corr_atoms=hubbard_corr_atoms,
-    overrides={
-        'kpoints_mesh': [3, 4, 3],
-        # 'kpoints_distance': 0.5,  # alternative to fixed mesh
-        'walltime_hours': 1.0,
-        'parameters': {
-            'SYSTEM': {'ecutwfc': 40.0, 'ecutrho': 480.0, 'degauss': 0.02},
-            'ELECTRONS': {'conv_thr': 1.0e-5},
+    code = aiida.orm.load_code('pwx_const@daint-general')  # Adjust to your code
+
+    # Protocol-based builder. All defaults come from the YAML files in
+    # lordcapulet/workflows/protocols/. Pass `overrides` as a nested dict
+    # to change only what you need.
+    #
+    # Available overrides (non-exhaustive):
+    #   'kpoints_distance'  - spacing in 1/Å  (default 0.4)
+    #   'kpoints_mesh'      - explicit [nx,ny,nz] (bypasses density logic)
+    #   'magnitude'         - magnetisation amplitude (default 0.5)
+    #   'walltime_hours'    - hours per calculation (default 2.0)
+    #   'pseudo_family'     - aiida-pseudo group label
+    #   'parameters'        - nested QE namelist overrides
+    builder = StandardMagneticScanWorkChain.get_builder_from_protocol(
+        code=code,
+        structure=hubbard_structure,
+        hubbard_corr_atoms=hubbard_corr_atoms,
+        overrides={
+            'kpoints_mesh': [3, 4, 3],
+            'walltime_hours': 1.0,
+            'parameters': {
+                'SYSTEM': {'ecutwfc': 40.0, 'ecutrho': 480.0, 'degauss': 0.02},
+                'ELECTRONS': {'conv_thr': 1.0e-5},
+            },
         },
-    },
-)
+    )
 
-# Submit the workchain
-workchain = submit(builder)
+    workchain = submit(builder)
+    workchain_pk = workchain.pk
 
-print(f"Submitted StandardMagneticScanWorkChain with PK: {workchain.pk}")
-print(f"Monitor progress with: verdi process status {workchain.pk}")
+    print(f"Submitted StandardMagneticScanWorkChain with PK: {workchain_pk}")
+    print(f"Monitor progress with: verdi process status {workchain_pk}")
 
-# create a file and save information about the workchain for postprocessing
-# append to the file if it already exists, otherwise create a new one
-with open('feo_afm_scan_info.txt', 'w') as f:
-    f.write("="*40 + "\n")
-    f.write(f"Workchain PK: {workchain.pk}\n")
-    f.write(f"Material: FeO\n")
-    f.write("="*40 + "\n")
+    # Stub JSON so reruns find the PK before extraction completes.
+    with open(JSON_FILE, 'w') as f:
+        json.dump(
+            {'metadata': {'pk': workchain_pk, 'material': material_name, 'status': 'submitted'}},
+            f, indent=2,
+        )
 
 
 # %%
 from lordcapulet.utils.postprocessing.gather_workchain_data import WorkchainDataExtractor
-# aiida profile load
 aiida.load_profile()
 
-
-material_name = "FeO"
-workchain_pk = workchain.pk  
-
-# Create extractor with SO(N) decomposition enabled
 extractor = WorkchainDataExtractor(perform_so_n=True,
                             sanity_check_reconstruct=True,
                             debug=True)
 
-# Extract data from workchain
 data = extractor.extract_from_workchain(workchain_pk)
-
-# Save to JSON
-extractor.save_to_json(data, f"{material_name}_afm_scan.json")
-
-
+extractor.save_to_json(data, JSON_FILE)
