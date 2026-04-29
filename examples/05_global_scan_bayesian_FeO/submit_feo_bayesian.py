@@ -71,7 +71,7 @@ else:
         hubbard_corr_atoms=hubbard_corr_atoms,
         overrides={
             'Nmax': 200,
-            'N': 10,
+            'N': 100,
             'proposal_mode': 'gaussian_process',
             # IMPORTANT: GP is refit from scratch every generation. The default
             # is Markovian (only the previous generation feeds the fit). For

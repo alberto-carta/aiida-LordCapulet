@@ -10,14 +10,23 @@ import json
 import os
 
 import plotly.graph_objects as go
+import plotly.colors as pc
 from plotly.subplots import make_subplots
+
+LABEL_COLORS = {
+    'standard magnetic scan': '#1f77b4',
+    'random proposal':        '#ff7f0e',
+    'GP proposal':            '#2ca02c',
+    'constrained scan':       '#d62728',
+}
+_FALLBACK_PALETTE = pc.qualitative.Plotly
 
 EXAMPLES_DIR = os.path.dirname(os.path.abspath(__file__))
 PLOTS_DIR = os.path.join(EXAMPLES_DIR, 'plots')
 os.makedirs(PLOTS_DIR, exist_ok=True)
 
 SOURCE_LABELS = {
-    'afm_workchain': 'standard magnetic search',
+    'afm_workchain': 'standard magnetic scan',
     'constrained_scan': 'constrained scan',
 }
 
@@ -26,17 +35,36 @@ EXAMPLE_DIRS = sorted(
 )
 
 
-def _infer_constrained_label(example_name: str) -> str:
+def _example_kind(example_name: str) -> str:
     name = example_name.lower()
-    if 'random' in name:
-        return 'random proposal'
     if 'gp' in name or 'bayes' in name or 'gaussian' in name:
+        return 'gp'
+    if 'random' in name:
+        return 'random'
+    return 'plain'
+
+
+def _constrained_label(example_kind: str, generation_number) -> str:
+    if example_kind == 'gp':
+        # generation 0 is the random warm-up; GP proposer kicks in from gen 1
+        if generation_number == 0:
+            return 'random proposal'
+        if isinstance(generation_number, int) and generation_number >= 1:
+            return 'GP proposal'
         return 'GP proposal'
+    if example_kind == 'random':
+        return 'random proposal'
     return 'constrained scan'
 
 
 def _iter_records(example_dir):
+    example_name = os.path.basename(example_dir)
+    kind = _example_kind(example_name)
     for json_path in glob.glob(os.path.join(example_dir, '*.json')):
+        # skip backup / stub files
+        base = os.path.basename(json_path)
+        if '.prev.' in base or base.endswith('.prev.json'):
+            continue
         with open(json_path, 'r') as f:
             data = json.load(f)
         calcs = data.get('calculations', {})
@@ -48,15 +76,17 @@ def _iter_records(example_dir):
             if energy is None or tot_mag is None:
                 continue
             src = calc.get('calculation_source', 'unknown')
+            gen = calc.get('generation_number')
             label = SOURCE_LABELS.get(src, src)
             if src == 'constrained_scan':
-                label = _infer_constrained_label(os.path.basename(example_dir))
+                label = _constrained_label(kind, gen)
             yield {
                 'pk': pk,
                 'energy_abs': energy,
                 'tot_mag': tot_mag,
                 'abs_mag': abs_mag,
                 'source': src,
+                'generation': gen,
                 'label': label,
                 'example': os.path.basename(example_dir),
                 'json': os.path.basename(json_path),
@@ -81,7 +111,8 @@ def _build_figure(records, example_name):
         horizontal_spacing=0.02,
         subplot_titles=('E vs M_tot', '# states'),
     )
-    for label, items in by_label.items():
+    for i, (label, items) in enumerate(by_label.items()):
+        color = LABEL_COLORS.get(label, _FALLBACK_PALETTE[i % len(_FALLBACK_PALETTE)])
         fig.add_trace(
             go.Scatter(
                 x=[r['tot_mag'] for r in items],
@@ -89,12 +120,14 @@ def _build_figure(records, example_name):
                 mode='markers',
                 name=label,
                 legendgroup=label,
-                marker=dict(size=8, opacity=0.8),
-                customdata=[[r['pk'], r['example'], r['abs_mag'], r['json'], r['energy_abs']] for r in items],
+                marker=dict(size=8, opacity=0.8, color=color),
+                customdata=[[r['pk'], r['example'], r['abs_mag'], r['json'], r['energy_abs'],
+                             ('—' if r['generation'] is None else r['generation'])] for r in items],
                 hovertemplate=(
                     '<b>source:</b> ' + label +
                     '<br><b>example:</b> %{customdata[1]}'
                     '<br><b>pk:</b> %{customdata[0]}'
+                    '<br><b>generation:</b> %{customdata[5]}'
                     '<br><b>M_tot:</b> %{x:.4f} μB'
                     '<br><b>|M|:</b> %{customdata[2]:.4f} μB'
                     '<br><b>ΔE:</b> %{y:.6f} eV'
@@ -112,6 +145,7 @@ def _build_figure(records, example_name):
                 showlegend=False,
                 opacity=0.75,
                 nbinsy=30,
+                marker=dict(color=color),
             ),
             row=1, col=2,
         )
