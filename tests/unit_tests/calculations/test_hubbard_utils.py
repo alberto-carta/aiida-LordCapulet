@@ -1,6 +1,6 @@
-"""Tests for ``prepare_tm_info`` and ``prepare_hubbard_structure``.
+"""Tests for ``prepare_hubbard_corr_info`` and ``prepare_hubbard_structure``.
 
-``prepare_tm_info`` is pure-Python and does not need an AiiDA profile.
+``prepare_hubbard_corr_info`` is pure-Python and does not need an AiiDA profile.
 ``prepare_hubbard_structure`` creates AiiDA ``StructureData`` and
 ``HubbardStructureData`` nodes, so those tests request the ``aiida_profile``
 fixture to ensure an active profile is present.
@@ -55,55 +55,55 @@ def _ase_fe2o3():
 
 
 # =============================================================================
-# prepare_tm_info (pure Python - no AiiDA needed)
+# prepare_hubbard_corr_info (pure Python - no AiiDA needed)
 # =============================================================================
 
-class TestPrepareTmInfo:
-    """Tests for ``prepare_tm_info``: the wrapper that calls the three helpers."""
+class TestPrepareHubbardCorrInfo:
+    """Tests for ``prepare_hubbard_corr_info``: the wrapper that calls the three helpers."""
 
     def test_returns_three_tuple(self):
-        from lordcapulet.utils.preprocessing.submission import prepare_tm_info
+        from lordcapulet.utils.preprocessing.submission import prepare_hubbard_corr_info
         atoms = _ase_feo()
-        result = prepare_tm_info(atoms)
+        result = prepare_hubbard_corr_info(atoms)
         assert isinstance(result, tuple) and len(result) == 3
 
     def test_feo_single_tm(self):
-        from lordcapulet.utils.preprocessing.submission import prepare_tm_info
+        from lordcapulet.utils.preprocessing.submission import prepare_hubbard_corr_info
         atoms = _ase_feo()
-        hubbard_corr_atoms, hubbard_corr_manifolds, hubbard_corr_dimensions = prepare_tm_info(atoms)
+        hubbard_corr_atoms, hubbard_corr_manifolds, hubbard_corr_dimensions = prepare_hubbard_corr_info(atoms)
         assert hubbard_corr_atoms == ['Fe1']
         assert hubbard_corr_manifolds == ['3d']
         assert hubbard_corr_dimensions == [50]   # 5*5*2
 
     def test_tag_is_set_on_atoms(self):
-        """prepare_tm_info must set atom.tag on the input Atoms in-place."""
-        from lordcapulet.utils.preprocessing.submission import prepare_tm_info
+        """prepare_hubbard_corr_info must set atom.tag on the input Atoms in-place."""
+        from lordcapulet.utils.preprocessing.submission import prepare_hubbard_corr_info
         atoms = _ase_feo()
-        prepare_tm_info(atoms)
+        prepare_hubbard_corr_info(atoms)
         fe = next(a for a in atoms if a.symbol == 'Fe')
         assert fe.tag == 1
 
     def test_two_tm_sequential_tags(self):
-        from lordcapulet.utils.preprocessing.submission import prepare_tm_info
+        from lordcapulet.utils.preprocessing.submission import prepare_hubbard_corr_info
         atoms = _ase_fe2o3()
-        hubbard_corr_atoms, _manifolds, _dims = prepare_tm_info(atoms)
+        hubbard_corr_atoms, _manifolds, _dims = prepare_hubbard_corr_info(atoms)
         assert hubbard_corr_atoms == ['Fe1', 'Fe2']
         assert _manifolds == ['3d', '3d']
         assert _dims == [50, 50]
 
     def test_custom_table_overrides_default(self):
         """Treating O as the Hubbard atom via a custom table."""
-        from lordcapulet.utils.preprocessing.submission import prepare_tm_info
+        from lordcapulet.utils.preprocessing.submission import prepare_hubbard_corr_info
         atoms = _ase_feo()
-        hubbard_corr_atoms, hubbard_corr_manifolds, _dims = prepare_tm_info(atoms, table={'O'})
+        hubbard_corr_atoms, hubbard_corr_manifolds, _dims = prepare_hubbard_corr_info(atoms, table={'O'})
         assert hubbard_corr_atoms == ['O1']
         assert hubbard_corr_manifolds == ['2p']
 
     def test_empty_structure_returns_empty_lists(self):
         from ase import Atoms
-        from lordcapulet.utils.preprocessing.submission import prepare_tm_info
+        from lordcapulet.utils.preprocessing.submission import prepare_hubbard_corr_info
         atoms = Atoms()  # completely empty
-        hubbard_corr_atoms, hubbard_corr_manifolds, hubbard_corr_dimensions = prepare_tm_info(atoms)
+        hubbard_corr_atoms, hubbard_corr_manifolds, hubbard_corr_dimensions = prepare_hubbard_corr_info(atoms)
         assert hubbard_corr_atoms == []
         assert hubbard_corr_manifolds == []
         assert hubbard_corr_dimensions == []
@@ -111,14 +111,14 @@ class TestPrepareTmInfo:
     def test_no_tm_in_structure(self):
         """A structure with no TM atoms returns empty lists."""
         from ase import Atoms
-        from lordcapulet.utils.preprocessing.submission import prepare_tm_info
+        from lordcapulet.utils.preprocessing.submission import prepare_hubbard_corr_info
         a = 4.0
         atoms = Atoms(
             symbols=['O', 'H'],
             positions=[(0, 0, 0), (1, 0, 0)],
             cell=[[a, 0, 0], [0, a, 0], [0, 0, a]],
         )
-        hubbard_corr_atoms, _m, _d = prepare_tm_info(atoms)
+        hubbard_corr_atoms, _m, _d = prepare_hubbard_corr_info(atoms)
         assert hubbard_corr_atoms == []
 
 
@@ -130,10 +130,10 @@ def _hs_feo(aiida_profile, **kwargs):
     """Helper: tag FeO atoms, call prepare_hubbard_structure, return result."""
     from lordcapulet.utils.preprocessing.submission import (
         prepare_hubbard_structure,
-        prepare_tm_info,
+        prepare_hubbard_corr_info,
     )
     atoms = _ase_feo()
-    hubbard_corr_atoms, hubbard_corr_manifolds, _ = prepare_tm_info(atoms)
+    hubbard_corr_atoms, hubbard_corr_manifolds, _ = prepare_hubbard_corr_info(atoms)
     return prepare_hubbard_structure(atoms, hubbard_corr_atoms, hubbard_corr_manifolds, **kwargs)
 
 
@@ -141,10 +141,10 @@ def _hs_fe2o3(aiida_profile, **kwargs):
     """Helper: tag Fe2O3-like atoms, call prepare_hubbard_structure."""
     from lordcapulet.utils.preprocessing.submission import (
         prepare_hubbard_structure,
-        prepare_tm_info,
+        prepare_hubbard_corr_info,
     )
     atoms = _ase_fe2o3()
-    hubbard_corr_atoms, hubbard_corr_manifolds, _ = prepare_tm_info(atoms)
+    hubbard_corr_atoms, hubbard_corr_manifolds, _ = prepare_hubbard_corr_info(atoms)
     return prepare_hubbard_structure(atoms, hubbard_corr_atoms, hubbard_corr_manifolds, **kwargs)
 
 
@@ -197,10 +197,10 @@ class TestPrepareHubbardStructureOnsite:
     def test_u_values_length_mismatch_raises(self, aiida_profile):
         from lordcapulet.utils.preprocessing.submission import (
             prepare_hubbard_structure,
-            prepare_tm_info,
+            prepare_hubbard_corr_info,
         )
         atoms = _ase_feo()
-        hubbard_corr_atoms, hubbard_corr_manifolds, _ = prepare_tm_info(atoms)
+        hubbard_corr_atoms, hubbard_corr_manifolds, _ = prepare_hubbard_corr_info(atoms)
         with pytest.raises(ValueError, match='lengths must match'):
             prepare_hubbard_structure(atoms, hubbard_corr_atoms, hubbard_corr_manifolds, U_values=[1.0, 2.0])
 
@@ -234,10 +234,10 @@ class TestPrepareHubbardStructureOrdering:
         """Even if O is listed first in ASE atoms, reorder puts Fe first."""
         from lordcapulet.utils.preprocessing.submission import (
             prepare_hubbard_structure,
-            prepare_tm_info,
+            prepare_hubbard_corr_info,
         )
         atoms = _ase_ofe()   # O is atom[0], Fe is atom[1]
-        hubbard_corr_atoms, hubbard_corr_manifolds, _ = prepare_tm_info(atoms)
+        hubbard_corr_atoms, hubbard_corr_manifolds, _ = prepare_hubbard_corr_info(atoms)
         hs = prepare_hubbard_structure(atoms, hubbard_corr_atoms, hubbard_corr_manifolds)
 
         symbols = [s.kind_name for s in hs.sites]
@@ -280,19 +280,19 @@ class TestPrepareHubbardStructureIntersite:
         """Dict format and tuple format should produce the same parameter count."""
         from lordcapulet.utils.preprocessing.submission import (
             prepare_hubbard_structure,
-            prepare_tm_info,
+            prepare_hubbard_corr_info,
         )
 
         atoms_t = _ase_feo()
-        tm_t, mf_t, _ = prepare_tm_info(atoms_t)
+        hubbard_corr_atoms_t, manifolds_t, _ = prepare_hubbard_corr_info(atoms_t)
         hs_t = prepare_hubbard_structure(
-            atoms_t, tm_t, mf_t, neighbors=[('O1', '2p')], intersite_V_values=2.0
+            atoms_t, hubbard_corr_atoms_t, manifolds_t, neighbors=[('O1', '2p')], intersite_V_values=2.0
         )
 
         atoms_d = _ase_feo()
-        tm_d, mf_d, _ = prepare_tm_info(atoms_d)
+        hubbard_corr_atoms_d, manifolds_d, _ = prepare_hubbard_corr_info(atoms_d)
         hs_d = prepare_hubbard_structure(
-            atoms_d, tm_d, mf_d,
+            atoms_d, hubbard_corr_atoms_d, manifolds_d,
             neighbors=[{'name': 'O1', 'manifold': '2p'}],
             intersite_V_values=2.0,
         )
@@ -319,10 +319,10 @@ class TestPrepareHubbardStructureIntersite:
     def test_v_values_length_mismatch_raises(self, aiida_profile):
         from lordcapulet.utils.preprocessing.submission import (
             prepare_hubbard_structure,
-            prepare_tm_info,
+            prepare_hubbard_corr_info,
         )
         atoms = _ase_feo()
-        hubbard_corr_atoms, hubbard_corr_manifolds, _ = prepare_tm_info(atoms)
+        hubbard_corr_atoms, hubbard_corr_manifolds, _ = prepare_hubbard_corr_info(atoms)
         with pytest.raises(ValueError, match='lengths must match'):
             prepare_hubbard_structure(
                 atoms, hubbard_corr_atoms, hubbard_corr_manifolds,

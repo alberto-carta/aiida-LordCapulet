@@ -84,7 +84,8 @@ default_dimensions = {
 #%%
 def tag_and_list_atoms(atoms, table=None):
     """
-    Tags atoms based on whether they are transition metals or other elements.
+    Tags atoms based on whether they should receive a Hubbard correction.
+    By default we tag most transition metals and some actinides and lanthanides.
     Transition metals get a unique tag (e.g., Ni1, Mn2).
     Other elements get a tag based on their element symbol (e.g., O1, S1).
     These tags are stored in atom.info['custom_tag'].
@@ -109,20 +110,20 @@ def tag_and_list_atoms(atoms, table=None):
             if not isinstance(el, str):
                 raise ValueError("table must be a set of element symbols as strings.")
 
-    tm_counts = {}
+    hubbard_atom_counts = {}
     other_counts = {}
     hubbard_corr_atoms = []
 
     for atom in atoms:
 
         if atom.symbol in table:
-            if atom.symbol not in tm_counts:
-                tm_counts[atom.symbol] = 0
+            if atom.symbol not in hubbard_atom_counts:
+                hubbard_atom_counts[atom.symbol] = 0
             
-            tm_counts[atom.symbol] += 1
+            hubbard_atom_counts[atom.symbol] += 1
             # Store the custom string tag in atom.info
-            atom.tag = tm_counts[atom.symbol]
-            hubbard_corr_atoms.append(f"{atom.symbol}{tm_counts[atom.symbol]}")
+            atom.tag = hubbard_atom_counts[atom.symbol]
+            hubbard_corr_atoms.append(f"{atom.symbol}{hubbard_atom_counts[atom.symbol]}")
         else:
             if atom.symbol not in other_counts:
                 other_counts[atom.symbol] = 1
@@ -180,15 +181,15 @@ def get_dimensions(manifolds):
     return dimensions
 
 
-def prepare_tm_info(atoms, table=None):
+def prepare_hubbard_corr_info(atoms, table=None):
     """Condense the standard transition-metal preprocessing block into one call.
 
     Replaces the four-line boilerplate::
 
         hubbard_corr_atoms      = tag_and_list_atoms(atoms, table=table)
-        tm_manifolds  = get_default_manifolds(hubbard_corr_atoms)
-        tm_dimensions = get_dimensions(tm_manifolds)
-        total_dimensions = sum(tm_dimensions)
+        hubbard_corr_manifolds  = get_default_manifolds(hubbard_corr_atoms)
+        hubbard_corr_dimensions = get_dimensions(hubbard_corr_manifolds)
+        total_dimensions = sum(hubbard_corr_dimensions)
 
     Args:
         atoms: ASE :class:`~ase.Atoms` object to inspect.
@@ -196,22 +197,22 @@ def prepare_tm_info(atoms, table=None):
             defaults to all TMs handled by :func:`tag_and_list_atoms`.
 
     Returns:
-        tuple: ``(hubbard_corr_atoms, tm_manifolds, tm_dimensions)`` where
+        tuple: ``(hubbard_corr_atoms, hubbard_corr_manifolds, hubbard_corr_dimensions)`` where
 
         * ``hubbard_corr_atoms``      - list of tagged species strings, e.g. ``['Fe1', 'Fe2']``
-        * ``tm_manifolds``  - list of manifold strings, e.g. ``['3d', '3d']``
-        * ``tm_dimensions`` - list of total orbital counts (``dim²×2`` per atom)
+        * ``hubbard_corr_manifolds``  - list of manifold strings, e.g. ``['3d', '3d']``
+        * ``hubbard_corr_dimensions`` - list of total orbital counts (``dim²×2`` per atom)
     """
     hubbard_corr_atoms = tag_and_list_atoms(atoms, table=table)
-    tm_manifolds = get_default_manifolds(hubbard_corr_atoms)
-    tm_dimensions = get_dimensions(tm_manifolds)
-    return hubbard_corr_atoms, tm_manifolds, tm_dimensions
+    hubbard_corr_manifolds = get_default_manifolds(hubbard_corr_atoms)
+    hubbard_corr_dimensions = get_dimensions(hubbard_corr_manifolds)
+    return hubbard_corr_atoms, hubbard_corr_manifolds, hubbard_corr_dimensions
 
 
 def prepare_hubbard_structure(
     atoms,
     hubbard_corr_atoms,
-    tm_manifolds,
+    hubbard_corr_manifolds,
     U_values=5.0,
     neighbors=None,
     intersite_V_values=None,
@@ -225,7 +226,7 @@ def prepare_hubbard_structure(
         hubbard_structure = HubbardStructureData.from_structure(structure)
         for itm, hubbard_corr_atom in enumerate(hubbard_corr_atoms):
             hubbard_structure.initialize_onsites_hubbard(
-                atom_name=hubbard_corr_atom, atom_manifold=tm_manifolds[itm], value=Uval)
+                atom_name=hubbard_corr_atom, atom_manifold=hubbard_corr_manifolds[itm], value=Uval)
         hutils = HubbardUtils(hubbard_structure)
         hutils.reorder_atoms()
         hubbard_structure = hutils._hubbard_structure
@@ -237,7 +238,7 @@ def prepare_hubbard_structure(
         atoms: ASE :class:`~ase.Atoms` object (e.g. from ``ase.io.read``).
         hubbard_corr_atoms: list of tagged TM species strings as returned by
             :func:`prepare_tm_info`, e.g. ``['Fe1', 'Fe2']``.
-        tm_manifolds: list of manifold strings matching *hubbard_corr_atoms*,
+        hubbard_corr_manifolds: list of manifold strings matching *hubbard_corr_atoms*,
             e.g. ``['3d', '3d']``.
         U_values: Hubbard U value(s) in eV. Either:
 
@@ -288,7 +289,7 @@ def prepare_hubbard_structure(
     structure = StructureData(ase=atoms)
     hubbard_structure = HubbardStructureData.from_structure(structure)
 
-    for hubbard_corr_atom, manifold, u_val in zip(hubbard_corr_atoms, tm_manifolds, u_list):
+    for hubbard_corr_atom, manifold, u_val in zip(hubbard_corr_atoms, hubbard_corr_manifolds, u_list):
         hubbard_structure.initialize_onsites_hubbard(
             atom_name=hubbard_corr_atom,
             atom_manifold=manifold,
@@ -319,11 +320,11 @@ def prepare_hubbard_structure(
                     f"lengths must match."
                 )
 
-        for hubbard_corr_atom, tm_manifold in zip(hubbard_corr_atoms, tm_manifolds):
+        for hubbard_corr_atom, hubbard_corr_manifold in zip(hubbard_corr_atoms, hubbard_corr_manifolds):
             for (nb_name, nb_manifold), v_val in zip(parsed_neighbors, v_list):
                 hubbard_structure.initialize_intersites_hubbard(
                     atom_name=hubbard_corr_atom,
-                    atom_manifold=tm_manifold,
+                    atom_manifold=hubbard_corr_manifold,
                     neighbour_name=nb_name,
                     neighbour_manifold=nb_manifold,
                     value=v_val,

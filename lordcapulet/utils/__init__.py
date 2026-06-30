@@ -16,7 +16,7 @@ from lordcapulet.utils.preprocessing.submission import (
     tag_and_list_atoms,
     get_default_manifolds,
     get_dimensions,
-    prepare_tm_info,
+    prepare_hubbard_corr_info,
     prepare_hubbard_structure,
 )
 
@@ -27,6 +27,6 @@ __all__ = [
     'tag_and_list_atoms',
     'get_default_manifolds',
     'get_dimensions',
-    'prepare_tm_info',
+    'prepare_hubbard_corr_info',
     'prepare_hubbard_structure',
 ]

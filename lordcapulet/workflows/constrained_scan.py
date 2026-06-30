@@ -100,7 +100,7 @@ class ConstrainedScanWorkChain(ProtocolMixin, WorkChain):
                 inputs.get('metadata_options', {}), options
             )
 
-        # Compute n_oscdft from the TM atoms (dim*dim*2 per atom, matching get_dimensions)
+        # Compute n_oscdft from the Hubbard-corrected atoms (dim*dim*2 per atom, matching get_dimensions)
         manifolds = get_default_manifolds(hubbard_corr_atoms)
         n_oscdft = sum(get_dimensions(manifolds))
 

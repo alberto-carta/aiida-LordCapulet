@@ -114,7 +114,7 @@ class GlobalConstrainedSearchWorkChain(WorkChain):
                 dict ``{'mag_scan': code1, 'constrained': code2}`` to use
                 different codes for each sub-workchain.
             structure: input structure.
-            hubbard_corr_atoms: list of tagged TM species strings returned by
+            hubbard_corr_atoms: list of tagged hubbard species strings returned by
                 :func:`~lordcapulet.utils.preprocessing.submission.tag_and_list_atoms`.
             protocol: protocol name (default: ``'default'``).
             overrides: optional dict.  Keys ``'mag_scan'`` and ``'constrained'``
