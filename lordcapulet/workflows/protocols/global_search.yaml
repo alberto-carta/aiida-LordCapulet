@@ -9,7 +9,7 @@ Nmax: 20              # maximum number of constrained calculations to run in tot
 N: 4                  # number of proposals per generation
 proposal_mode: random_so_n   # see lordcapulet.functions.propose for available modes
 proposal_debug: false
-proposal_holistic: false
+proposal_holistic: true
 
 protocols:
     default:
