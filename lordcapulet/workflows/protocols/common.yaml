@@ -1,0 +1,34 @@
+# Common DFT defaults shared across all LordCapulet workchains.
+# Workchain-specific YAML files are merged on top of these values;
+# later entries always win (see ProtocolMixin.get_protocol_inputs for merge order).
+
+default_inputs:
+    pseudo_family: 'SSSP/1.3/PBEsol/efficiency'
+    # Minimum distance between k-points in reciprocal space (in 1/Å).
+    # KpointsData.set_kpoints_mesh_from_density() converts this into an
+    # anisotropic mesh that correctly handles non-cubic cells.
+    # Override with a larger value (coarser) or smaller (denser).
+    # You can also bypass this entirely by passing
+    # overrides={'kpoints_mesh': [4, 4, 4]} to force a fixed mesh.
+    kpoints_distance: 0.4
+    parameters:
+        CONTROL:
+            calculation: scf
+            restart_mode: from_scratch
+            verbosity: high
+        SYSTEM:
+            ecutwfc: 60.0
+            ecutrho: 480.0
+            occupations: smearing
+            smearing: cold
+            degauss: 0.01
+            nspin: 2
+        ELECTRONS:
+            conv_thr: 1.0e-8
+            mixing_beta: 0.1
+            electron_maxstep: 500
+            mixing_mode: local-TF
+    metadata_options:
+        resources:
+            num_machines: 1
+        withmpi: true

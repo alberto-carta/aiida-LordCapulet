@@ -168,10 +168,14 @@ class TestOccupationMatrixData:
         assert moment == pytest.approx(2.0)  # 3.0 - 1.0
     
     def test_from_aiida_qe_occupations_simple(self):
-        """Test conversion from AiiDA-QE get_occupations() format."""
+        """Test conversion from AiiDA-QE get_occupations() format.
+        
+        atom_index comes from QE as a plain integer; from_aiida_qe_occupations
+        must normalise it to the canonical 'Atom_N' string key.
+        """
         aiida_format = [
             {
-                'atom_index': 'Atom_1',
+                'atom_index': 1,          # QE returns an integer
                 'kind_name': 'Fe1',
                 'manifold': '3d',
                 'occupations': {
@@ -195,10 +199,10 @@ class TestOccupationMatrixData:
         )
     
     def test_from_aiida_qe_occupations_multiple_atoms(self):
-        """Test conversion with multiple atoms."""
+        """Test conversion with multiple atoms; both use integer atom_index as QE returns."""
         aiida_format = [
             {
-                'atom_index': 'Atom_1',
+                'atom_index': 1,
                 'kind_name': 'Fe1',
                 'manifold': '3d',
                 'occupations': {
@@ -207,7 +211,7 @@ class TestOccupationMatrixData:
                 }
             },
             {
-                'atom_index': 'Atom_2',
+                'atom_index': 2,
                 'kind_name': 'Fe2',
                 'manifold': '3d',
                 'occupations': {

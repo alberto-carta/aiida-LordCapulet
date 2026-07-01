@@ -1,0 +1,22 @@
+# Protocol file for ConstrainedScanWorkChain.
+# These values are merged on top of common.yaml defaults.
+# Note: n_oscdft is computed automatically from tm_atoms at builder-call time
+#       and is therefore not stored here.
+
+default_protocol: default
+
+# Constrained-scan-specific defaults
+walltime_hours: 2.0
+
+oscdft_card:
+    oscdft_type: 2
+    constraint_strength: 1.0
+    constraint_conv_thr: 0.005
+    constraint_maxstep: 200
+    constraint_mixing_beta: 0.4
+
+protocols:
+    default:
+        description: >
+            Standard constrained scan: run one ConstrainedPWCalculation per
+            target occupation matrix, storing converged occupation matrices.

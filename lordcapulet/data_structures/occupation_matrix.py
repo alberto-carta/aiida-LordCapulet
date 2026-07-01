@@ -7,6 +7,7 @@ abstracting away the differences between various AiiDA-QE API versions and inter
 """
 
 import json
+from copy import deepcopy
 import numpy as np
 from typing import Dict, List, Any, Union, Optional
 from aiida.orm import JsonableData, load_node
@@ -75,7 +76,11 @@ class OccupationMatrixData:
         # so here we keep an internal structure
         
         for atom_data in occupations_list:
-            atom_label = atom_data['atom_index']
+            # Always use 'Atom_N' string keys so the key format is consistent
+            # regardless of whether the data was just parsed from QE or loaded
+            # back from the AiiDA database (where JSON round-trip would turn an
+            # integer key into a string anyway).
+            atom_label = f"Atom_{atom_data['atom_index']}"
             atom_specie = atom_data['kind_name']
             shell = atom_data['manifold']
             occ_matrix = atom_data['occupations']
@@ -179,7 +184,8 @@ class OccupationMatrixData:
         matrix = matrix_data['matrix']
         
         for atom_idx, atom_matrix in enumerate(matrix):
-            atom_label = atom_idx + 1
+            # Use 'Atom_N' keys to match the rest of the codebase
+            atom_label = f"Atom_{atom_idx + 1}"
             specie = atom_species[atom_idx] if atom_species and atom_idx < len(atom_species) else 'Unknown'
             
             up_matrix = atom_matrix[0]  # First spin channel
@@ -196,6 +202,89 @@ class OccupationMatrixData:
         
         return cls(data)
     
+    @classmethod
+    def from_qe_stdout(cls, stdout: str, structure=None) -> 'OccupationMatrixData':
+        """
+        Parse occupation matrices from QE stdout using the new HUBBARD OCCUPATIONS
+        format (QE >= 7.x, nspin=2 DFT+U).
+
+        Args:
+            stdout: Contents of the QE output file (aiida.out).
+            structure: Optional AiiDA StructureData/HubbardStructureData used to map
+                       QE 1-indexed atom positions to kind names.
+
+        Returns:
+            OccupationMatrixData instance.
+        """
+        import re
+
+        marker = '=================== HUBBARD OCCUPATIONS ==================='
+        idx = stdout.rfind(marker)
+        if idx == -1:
+            raise ValueError("No HUBBARD OCCUPATIONS block found in stdout")
+
+        block = stdout[idx:]
+        sites = structure.sites if structure is not None else None
+
+        data = {}
+        atom_header_re = re.compile(r'-{5,}\s*ATOM\s+(\d+)\s*-{5,}')
+        parts = atom_header_re.split(block)
+        # parts layout: [preamble, "1", atom1_content, "2", atom2_content, ...]
+
+        for i in range(1, len(parts), 2):
+            atom_index = int(parts[i])  # QE 1-indexed
+            atom_content = parts[i + 1]
+
+            if sites is not None and atom_index - 1 < len(sites):
+                specie = sites[atom_index - 1].kind_name
+            else:
+                specie = f'Unknown_{atom_index}'
+
+            spin_re = re.compile(r'\bSPIN\s+(\d+)\s*\n')
+            spin_parts = spin_re.split(atom_content)
+            # spin_parts: [pre, "1", spin1_content, "2", spin2_content, ...]
+
+            spin_matrices = {}
+            for j in range(1, len(spin_parts), 2):
+                spin_index = int(spin_parts[j])
+                spin_content = spin_parts[j + 1]
+
+                occ_marker = 'occupation matrix ns (before diag.):'
+                occ_pos = spin_content.find(occ_marker)
+                if occ_pos == -1:
+                    continue
+
+                matrix_rows = []
+                for line in spin_content[occ_pos + len(occ_marker):].split('\n'):
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        row = [float(x) for x in line.split()]
+                        if row:
+                            matrix_rows.append(row)
+                    except ValueError:
+                        if matrix_rows:
+                            break  # end of matrix rows
+
+                spin_matrices[spin_index] = matrix_rows
+
+            up = spin_matrices.get(1, [])
+            down = spin_matrices.get(2, [])
+            n = len(up)
+            shell = {3: 'p', 5: 'd', 7: 'f'}.get(n, f'{n}-orbital')
+
+            data[f'Atom_{atom_index}'] = {
+                'specie': specie,
+                'shell': shell,
+                'occupation_matrix': {'up': up, 'down': down},
+            }
+
+        if not data:
+            raise ValueError("No occupation matrices could be parsed from HUBBARD OCCUPATIONS block")
+
+        return cls(data)
+
     def to_constrained_matrix_format(self) -> Dict[str, Any]:
         """
         Convert to ConstrainedPW input matrix format.
@@ -358,22 +447,6 @@ class OccupationMatrixData:
         return self.__str__()
 
 
-class OccupationMatrixAiidaData(JsonableData):
-    """
-    AiiDA JsonableData wrapper for OccupationMatrixData.
-    
-    This allows storing OccupationMatrixData in the AiiDA database
-    """
-    
-    def __init__(self, obj: OccupationMatrixData = None, **kwargs):
-        if obj is None:
-            obj = OccupationMatrixData()
-        super().__init__(obj, **kwargs)
-    
-    @property
-    def occupation_data(self) -> OccupationMatrixData:
-        """Get the wrapped OccupationMatrixData object."""
-        return self.obj
 
 
 # Utility functions for backward compatibility and easy migration
@@ -402,12 +475,22 @@ def extract_occupations_from_calc(calc_node) -> OccupationMatrixData:
             occupations_dict = calc_node.tools.get_occupations_dict()
             return OccupationMatrixData.from_legacy_dict(occupations_dict)
         except AttributeError:
-            # Last resort: try to get from output_atomic_occupations
+            # Try output_atomic_occupations node (older aiida-quantumespresso)
             if 'output_atomic_occupations' in calc_node.outputs:
                 legacy_dict = calc_node.outputs.output_atomic_occupations.get_dict()
                 return OccupationMatrixData.from_legacy_dict(legacy_dict)
-            else:
-                raise ValueError(f"Could not extract occupations from calculation {calc_node.pk}")
+
+            # Last resort: parse the QE stdout directly (new HUBBARD OCCUPATIONS
+            # format, QE >= 7.x, not yet handled by the aiida-quantumespresso parser)
+            if 'retrieved' in calc_node.outputs:
+                try:
+                    stdout = calc_node.outputs.retrieved.get_object_content('aiida.out')
+                    structure = calc_node.inputs.structure if 'structure' in calc_node.inputs else None
+                    return OccupationMatrixData.from_qe_stdout(stdout, structure=structure)
+                except Exception:
+                    pass
+
+            raise ValueError(f"Could not extract occupations from calculation {calc_node.pk}")
     
     except Exception as e:
         raise ValueError(f"Error extracting occupations from calculation {calc_node.pk}: {e}")
@@ -432,6 +515,27 @@ def filter_atoms_by_species(occupation_data: OccupationMatrixData,
             filtered_data[atom_label] = atom_info
     
     return OccupationMatrixData(filtered_data)
+
+
+def clip_occupation_numbers(
+    occupation_data: OccupationMatrixData,
+    lower: float = -1.0,
+    upper: float = 1.0,
+) -> OccupationMatrixData:
+    """Return a copy with all occupation matrix values clipped to the OSCDFT input range."""
+    clipped_data = deepcopy(occupation_data.data)
+
+    for atom_data in clipped_data.values():
+        occupation_matrix = atom_data.get("occupation_matrix", {})
+        for spin in ("up", "down"):
+            if spin in occupation_matrix:
+                occupation_matrix[spin] = np.clip(
+                    np.asarray(occupation_matrix[spin], dtype=float),
+                    lower,
+                    upper,
+                ).tolist()
+
+    return OccupationMatrixData(clipped_data)
 
 
 def compute_occupation_distance(occ_data1: OccupationMatrixData,

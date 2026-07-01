@@ -1,0 +1,1611 @@
+"""Tests for the ``GlobalConstrainedSearchWorkChain`` class."""
+
+import pytest
+from unittest.mock import patch, MagicMock
+import numpy as np
+from aiida.orm import Dict, Float, Int, Bool, List, Str
+
+from lordcapulet.workflows.global_constrained_search import GlobalConstrainedSearchWorkChain
+
+
+# ---------------------------------------------------------------------------
+# Shared helpers
+# ---------------------------------------------------------------------------
+
+def _global_inputs(structure, kpoints, pw_code, constrained_code,
+                   Nmax=10, N=3, startup_mode=None,
+                   seed_global_workchain_pk=None, proposal_mode=None,
+                   proposal_holistic=None):
+    """Minimal valid GlobalConstrainedSearchWorkChain inputs."""
+    inputs = {
+        'mag_scan': {
+            'structure': structure,
+            'parameters': Dict({'CONTROL': {'calculation': 'scf'},
+                                'SYSTEM': {'ecutwfc': 30, 'ecutrho': 240, 'nspin': 2}}),
+            'kpoints': kpoints,
+            'code': pw_code,
+            'hubbard_corr_atoms': List(list=['Fe']),
+        },
+        'constrained': {
+            'structure': structure,
+            'parameters': Dict({'CONTROL': {'calculation': 'scf'},
+                                'SYSTEM': {'ecutwfc': 30, 'ecutrho': 240, 'nspin': 2}}),
+            'kpoints': kpoints,
+            'code': constrained_code,
+            'hubbard_corr_atoms': List(list=['Fe']),
+            'oscdft_card': Dict({'nconstr': 1}),
+        },
+        'Nmax': Int(Nmax),
+        'N': Int(N),
+    }
+    if startup_mode is not None:
+        inputs['startup_mode'] = Str(startup_mode)
+    if seed_global_workchain_pk is not None:
+        inputs['seed_global_workchain_pk'] = Int(seed_global_workchain_pk)
+    if proposal_mode is not None:
+        inputs['proposal_mode'] = Str(proposal_mode)
+    if proposal_holistic is not None:
+        inputs['proposal_holistic'] = Bool(proposal_holistic)
+    return inputs
+
+
+def _stored_list(values):
+    """Create, store and return an AiiDA ``List`` node.
+
+    ``process_mag_scan_results`` checks ``len(mag_scan_matrices.get_list())`` and
+    ``gather_final_results`` calls ``.get_list()`` on the context lists.
+    The nodes must be *stored* so they have a PK and can be returned as
+    real workflow outputs.
+    """
+    node = List(list=values)
+    node.store()
+    return node
+
+
+def _stored_dict(values):
+    """Create, store and return an AiiDA ``Dict`` node."""
+    node = Dict(dict=values)
+    node.store()
+    return node
+
+
+class _FakeOutputs:
+    """Lightweight output-namespace stub.
+
+    ``GlobalConstrainedSearchWorkChain.process_mag_scan_results`` does::
+
+        if 'converged_matrix_pks' not in self.ctx.mag_scan_wc.outputs:
+            return self.exit_codes.ERROR_MAG_SCAN_FAILED
+
+    A plain ``MagicMock`` object returns ``True`` for *any* ``__contains__``
+    check because ``MagicMock.__contains__`` is itself a mock.  That would
+    silently skip the early-return branch, making the test always pass even
+    when the guard is broken.
+
+    ``_FakeOutputs`` implements ``__contains__`` via ``hasattr``, so only
+    attributes that were explicitly set are considered present - matching
+    real AiiDA output-namespace behaviour.
+    """
+
+    def __init__(self, **kwargs):
+        for k, v in kwargs.items():
+            setattr(self, k, v)
+
+    def __contains__(self, item: str) -> bool:
+        return hasattr(self, item)
+
+
+def _mock_mag_scan_wc(matrix_pks, calc_pks, all_calc_pks=None):
+    """Build a fake finished ``StandardMagneticScanWorkChain`` process node.
+
+    ``process_mag_scan_results`` reads three outputs off ``ctx.mag_scan_wc``:
+    ``converged_matrix_pks``, ``converged_calculation_pks``, and
+    ``all_calculation_pks``.  We bind stored ``List`` nodes to these
+    attributes through ``_FakeOutputs`` so attribute access and
+    ``'key' in outputs`` checks both work correctly.
+    """
+    mock = MagicMock()
+    mock.is_finished_ok = True
+    mock.exit_status = 0
+    mock.outputs = _FakeOutputs(
+        converged_matrix_pks=_stored_list(matrix_pks),
+        converged_calculation_pks=_stored_list(calc_pks),
+        all_calculation_pks=_stored_list(
+            all_calc_pks if all_calc_pks is not None else calc_pks
+        ),
+    )
+    return mock
+
+
+def _mock_constrained_wc(matrix_pks, calc_pks, converged_calc_pks=None):
+    """Build a fake finished ``ConstrainedScanWorkChain`` process node.
+
+    ``process_constrained_results`` reads three outputs off
+    ``ctx.constrained_wc``: ``converged_matrix_pks``, ``all_calculation_pks``,
+    and ``converged_calculation_pks``.
+    """
+    mock = MagicMock()
+    mock.is_finished_ok = True
+    mock.exit_status = 0
+    mock.outputs = _FakeOutputs(
+        converged_matrix_pks=_stored_list(matrix_pks),
+        all_calculation_pks=_stored_list(calc_pks),
+        converged_calculation_pks=_stored_list(
+            converged_calc_pks if converged_calc_pks is not None else calc_pks
+        ),
+    )
+    return mock
+
+
+def _mock_previous_global(outputs=None, called=None):
+    """Build a fake prior ``GlobalConstrainedSearchWorkChain`` process node."""
+    mock = MagicMock()
+    mock.is_finished_ok = True
+    mock.exit_status = 0
+    mock.outputs = outputs or _FakeOutputs()
+    mock.called = called or []
+    return mock
+
+
+def _proposal_list(values, **extras):
+    """Stored proposal-list node with optional provenance extras."""
+    node = _stored_list(values)
+    for key, value in extras.items():
+        node.base.extras.set(key, value)
+    return node
+
+
+def _capture_out_factory():
+    """Return a (store_dict, side_effect_fn) pair to intercept ``self.out`` calls.
+
+    ``gather_final_results`` calls ``self.out('key', stored_node)`` for each
+    output.  Patching ``out`` with this side-effect populates ``store`` so
+    tests can assert on the emitted nodes without the workchain being
+    connected to a real process graph.
+    """
+    store = {}
+
+    def _capture(key, value):
+        store[key] = value
+
+    return store, _capture
+
+
+class TestGlobalSearchDefine:
+    """Test the process spec definition."""
+
+    def test_inputs_defined(self):
+        """Verify all expected global-search-specific inputs are in the spec."""
+        from lordcapulet.workflows.global_constrained_search import GlobalConstrainedSearchWorkChain
+
+        spec = GlobalConstrainedSearchWorkChain.spec()
+
+        # Global search specific inputs
+        assert 'Nmax' in spec.inputs
+        assert 'N' in spec.inputs
+        assert 'proposal_mode' in spec.inputs
+        assert 'proposal_debug' in spec.inputs
+        assert 'proposal_holistic' in spec.inputs
+        assert 'proposal_kwargs' in spec.inputs
+        assert 'startup_mode' in spec.inputs
+        assert 'seed_global_workchain_pk' in spec.inputs
+
+        # Optional walltime overrides
+        assert 'mag_scan_walltime_hours' in spec.inputs
+        assert 'constrained_walltime_hours' in spec.inputs
+
+    def test_startup_mode_rejects_unknown_values(self):
+        """Invalid startup modes should fail during input validation."""
+        spec = GlobalConstrainedSearchWorkChain.spec()
+
+        error = spec.inputs['startup_mode'].validate(Str('restart_from_previous'))
+
+        assert error is not None
+        assert 'startup_mode must be one of' in error.message
+
+    def test_outputs_defined(self):
+        """Verify all expected outputs are in the spec."""
+        from lordcapulet.workflows.global_constrained_search import GlobalConstrainedSearchWorkChain
+
+        spec = GlobalConstrainedSearchWorkChain.spec()
+
+        assert 'converged_matrix_pks' in spec.outputs
+        assert 'converged_calculation_pks' in spec.outputs
+        assert 'all_calculation_pks' in spec.outputs
+        assert 'generation_summary' in spec.outputs
+
+    def test_exit_codes_defined(self):
+        """Verify all expected exit codes are defined."""
+        from lordcapulet.workflows.global_constrained_search import GlobalConstrainedSearchWorkChain
+
+        exit_codes = GlobalConstrainedSearchWorkChain.exit_codes
+
+        assert hasattr(exit_codes, 'ERROR_MAG_SCAN_FAILED')
+        assert exit_codes.ERROR_MAG_SCAN_FAILED.status == 400
+
+        assert hasattr(exit_codes, 'ERROR_CONSTRAINED_SCAN_FAILED')
+        assert exit_codes.ERROR_CONSTRAINED_SCAN_FAILED.status == 401
+
+        assert hasattr(exit_codes, 'ERROR_PROPOSAL_FAILED')
+        assert exit_codes.ERROR_PROPOSAL_FAILED.status == 402
+
+    def test_exposed_afm_namespace(self):
+        """Verify the AFM namespace is exposed."""
+        from lordcapulet.workflows.global_constrained_search import GlobalConstrainedSearchWorkChain
+
+        spec = GlobalConstrainedSearchWorkChain.spec()
+        assert 'mag_scan' in spec.inputs
+
+    def test_exposed_constrained_namespace(self):
+        """Verify the constrained namespace is exposed."""
+        from lordcapulet.workflows.global_constrained_search import GlobalConstrainedSearchWorkChain
+
+        spec = GlobalConstrainedSearchWorkChain.spec()
+        assert 'constrained' in spec.inputs
+
+
+class TestStartupMode:
+    """Test global-search startup-mode branching."""
+
+    def _make_process(self, generate_workchain, generate_structure,
+                      generate_kpoints_mesh, fixture_code, pseudo_family,
+                      **kwargs):
+        structure = generate_structure('feo')
+        kpoints = generate_kpoints_mesh(4)
+        pw_code = fixture_code('quantumespresso.pw')
+        constrained_code = fixture_code('lordcapulet.constrained_pw')
+        return generate_workchain(
+            GlobalConstrainedSearchWorkChain,
+            _global_inputs(structure, kpoints, pw_code, constrained_code, **kwargs),
+        )
+
+    def test_default_startup_mode_is_from_scratch(
+        self, generate_workchain, generate_structure, generate_kpoints_mesh,
+        fixture_code, pseudo_family,
+    ):
+        process = self._make_process(
+            generate_workchain, generate_structure, generate_kpoints_mesh,
+            fixture_code, pseudo_family,
+        )
+
+        assert process.should_start_from_scratch() is True
+        assert process.should_start_seeded() is False
+
+    def test_seeded_startup_mode_selects_seed_import(
+        self, generate_workchain, generate_structure, generate_kpoints_mesh,
+        fixture_code, pseudo_family,
+    ):
+        process = self._make_process(
+            generate_workchain, generate_structure, generate_kpoints_mesh,
+            fixture_code, pseudo_family,
+            startup_mode='seeded',
+            seed_global_workchain_pk=123,
+        )
+
+        assert process.should_start_from_scratch() is False
+        assert process.should_start_seeded() is True
+
+    def test_seeded_startup_requires_seed_pk(
+        self, generate_workchain, generate_structure, generate_kpoints_mesh,
+        fixture_code, pseudo_family,
+    ):
+        process = self._make_process(
+            generate_workchain, generate_structure, generate_kpoints_mesh,
+            fixture_code, pseudo_family,
+            startup_mode='seeded',
+        )
+
+        with patch.object(process, 'report'):
+            result = process.import_seed_results()
+
+        assert result == process.exit_codes.ERROR_SEED_IMPORT_FAILED
+
+
+class TestShouldContinueSearch:
+    """Test the ``should_continue_search`` step."""
+
+    def test_continues_under_limit(
+        self, generate_workchain, generate_structure, generate_kpoints_mesh, fixture_code, pseudo_family,
+    ):
+        """should_continue_search returns True when N_cumulative < Nmax."""
+        structure = generate_structure('feo')
+        kpoints = generate_kpoints_mesh(4)
+        pw_code = fixture_code('quantumespresso.pw')
+        constrained_code = fixture_code('lordcapulet.constrained_pw')
+
+        inputs = {
+            'mag_scan': {
+                'structure': structure,
+                'parameters': Dict({'CONTROL': {'calculation': 'scf'}, 'SYSTEM': {'ecutwfc': 30, 'ecutrho': 240, 'nspin': 2}}),
+                'kpoints': kpoints,
+                'code': pw_code,
+                'hubbard_corr_atoms': List(list=['Fe']),
+            },
+            'constrained': {
+                'structure': structure,
+                'parameters': Dict({'CONTROL': {'calculation': 'scf'}, 'SYSTEM': {'ecutwfc': 30, 'ecutrho': 240, 'nspin': 2}}),
+                'kpoints': kpoints,
+                'code': constrained_code,
+                'hubbard_corr_atoms': List(list=['Fe']),
+                'oscdft_card': Dict({'nconstr': 1}),
+            },
+            'Nmax': Int(100),
+            'N': Int(10),
+        }
+
+        process = generate_workchain(GlobalConstrainedSearchWorkChain, inputs)
+
+        # Manually set cumulative below limit
+        process.ctx.N_cumulative = 50
+
+        assert process.should_continue_search() is True
+
+    def test_stops_at_limit(
+        self, generate_workchain, generate_structure, generate_kpoints_mesh, fixture_code, pseudo_family,
+    ):
+        """should_continue_search returns False when N_cumulative >= Nmax."""
+        structure = generate_structure('feo')
+        kpoints = generate_kpoints_mesh(4)
+        pw_code = fixture_code('quantumespresso.pw')
+        constrained_code = fixture_code('lordcapulet.constrained_pw')
+
+        inputs = {
+            'mag_scan': {
+                'structure': structure,
+                'parameters': Dict({'CONTROL': {'calculation': 'scf'}, 'SYSTEM': {'ecutwfc': 30, 'ecutrho': 240, 'nspin': 2}}),
+                'kpoints': kpoints,
+                'code': pw_code,
+                'hubbard_corr_atoms': List(list=['Fe']),
+            },
+            'constrained': {
+                'structure': structure,
+                'parameters': Dict({'CONTROL': {'calculation': 'scf'}, 'SYSTEM': {'ecutwfc': 30, 'ecutrho': 240, 'nspin': 2}}),
+                'kpoints': kpoints,
+                'code': constrained_code,
+                'hubbard_corr_atoms': List(list=['Fe']),
+                'oscdft_card': Dict({'nconstr': 1}),
+            },
+            'Nmax': Int(100),
+            'N': Int(10),
+        }
+
+        process = generate_workchain(GlobalConstrainedSearchWorkChain, inputs)
+
+        # Set cumulative at limit
+        process.ctx.N_cumulative = 100
+
+        assert process.should_continue_search() is False
+
+    def test_stops_above_limit(
+        self, generate_workchain, generate_structure, generate_kpoints_mesh, fixture_code, pseudo_family,
+    ):
+        """should_continue_search returns False when N_cumulative > Nmax."""
+        structure = generate_structure('feo')
+        kpoints = generate_kpoints_mesh(4)
+        pw_code = fixture_code('quantumespresso.pw')
+        constrained_code = fixture_code('lordcapulet.constrained_pw')
+
+        inputs = {
+            'mag_scan': {
+                'structure': structure,
+                'parameters': Dict({'CONTROL': {'calculation': 'scf'}, 'SYSTEM': {'ecutwfc': 30, 'ecutrho': 240, 'nspin': 2}}),
+                'kpoints': kpoints,
+                'code': pw_code,
+                'hubbard_corr_atoms': List(list=['Fe']),
+            },
+            'constrained': {
+                'structure': structure,
+                'parameters': Dict({'CONTROL': {'calculation': 'scf'}, 'SYSTEM': {'ecutwfc': 30, 'ecutrho': 240, 'nspin': 2}}),
+                'kpoints': kpoints,
+                'code': constrained_code,
+                'hubbard_corr_atoms': List(list=['Fe']),
+                'oscdft_card': Dict({'nconstr': 1}),
+            },
+            'Nmax': Int(100),
+            'N': Int(10),
+        }
+
+        process = generate_workchain(GlobalConstrainedSearchWorkChain, inputs)
+
+        process.ctx.N_cumulative = 150
+
+        assert process.should_continue_search() is False
+
+
+class TestUpdateCounters:
+    """Test the ``update_counters`` step."""
+
+    def test_increments_cumulative(
+        self, generate_workchain, generate_structure, generate_kpoints_mesh, fixture_code, pseudo_family,
+    ):
+        """update_counters should add the generation's n_calculations to N_cumulative."""
+        structure = generate_structure('feo')
+        kpoints = generate_kpoints_mesh(4)
+        pw_code = fixture_code('quantumespresso.pw')
+        constrained_code = fixture_code('lordcapulet.constrained_pw')
+
+        inputs = {
+            'mag_scan': {
+                'structure': structure,
+                'parameters': Dict({'CONTROL': {'calculation': 'scf'}, 'SYSTEM': {'ecutwfc': 30, 'ecutrho': 240, 'nspin': 2}}),
+                'kpoints': kpoints,
+                'code': pw_code,
+                'hubbard_corr_atoms': List(list=['Fe']),
+            },
+            'constrained': {
+                'structure': structure,
+                'parameters': Dict({'CONTROL': {'calculation': 'scf'}, 'SYSTEM': {'ecutwfc': 30, 'ecutrho': 240, 'nspin': 2}}),
+                'kpoints': kpoints,
+                'code': constrained_code,
+                'hubbard_corr_atoms': List(list=['Fe']),
+                'oscdft_card': Dict({'nconstr': 1}),
+            },
+            'Nmax': Int(100),
+            'N': Int(10),
+        }
+
+        process = generate_workchain(GlobalConstrainedSearchWorkChain, inputs)
+
+        # Inject context state
+        process.ctx.N_cumulative = 20
+        process.ctx.generation = 2
+        process.ctx.generation_results = {
+            2: {
+                'type': 'constrained',
+                'n_calculations': 10,
+                'n_successful': 8,
+                'n_failed': 2,
+            }
+        }
+
+        process.update_counters()
+
+        assert process.ctx.N_cumulative == 30  # 20 + 10
+
+
+# ---------------------------------------------------------------------------
+# New comprehensive data-flow tests
+# ---------------------------------------------------------------------------
+
+class TestRunInitialMagScan:
+    """Test the ``run_initial_mag_scan`` step.
+
+    Strategy
+    --------
+    ``run_initial_mag_scan`` builds a ``StandardMagneticScanWorkChain`` builder
+    populated from ``self.inputs.mag_scan``, optionally overrides walltime,
+    submits it, and returns ``ToContext(mag_scan_wc=future)``.
+
+    ``self.submit`` is patched to prevent real submission; the captured builder
+    argument lets us verify the correct inputs were forwarded.
+
+    This test class was added specifically to catch regressions like accessing
+    ``self.inputs.afm`` instead of ``self.inputs.mag_scan``.
+    """
+
+    def _make_process(self, generate_workchain, generate_structure,
+                      generate_kpoints_mesh, fixture_code, pseudo_family,
+                      extra_inputs=None):
+        structure = generate_structure('feo')
+        kpoints = generate_kpoints_mesh(4)
+        pw_code = fixture_code('quantumespresso.pw')
+        constrained_code = fixture_code('lordcapulet.constrained_pw')
+        inputs = _global_inputs(structure, kpoints, pw_code, constrained_code)
+        if extra_inputs:
+            inputs.update(extra_inputs)
+        return generate_workchain(GlobalConstrainedSearchWorkChain, inputs)
+
+    def test_submit_called_exactly_once(
+        self, generate_workchain, generate_structure, generate_kpoints_mesh,
+        fixture_code, pseudo_family,
+    ):
+        """run_initial_mag_scan must call submit exactly once."""
+        process = self._make_process(generate_workchain, generate_structure,
+                                     generate_kpoints_mesh, fixture_code, pseudo_family)
+        with patch.object(process, 'submit', return_value=MagicMock()) as mock_sub, \
+             patch.object(process, 'report'):
+            process.run_initial_mag_scan()
+        assert mock_sub.call_count == 1
+
+    def test_structure_forwarded_from_inputs_mag_scan(
+        self, generate_workchain, generate_structure, generate_kpoints_mesh,
+        fixture_code, pseudo_family,
+    ):
+        """The builder passed to submit must carry the structure from inputs.mag_scan.
+
+        This explicitly guards against accessing self.inputs.afm (old name)
+        instead of self.inputs.mag_scan.
+        """
+        process = self._make_process(generate_workchain, generate_structure,
+                                     generate_kpoints_mesh, fixture_code, pseudo_family)
+        captured = []
+        with patch.object(process, 'submit',
+                          side_effect=lambda b: captured.append(b) or MagicMock()), \
+             patch.object(process, 'report'):
+            process.run_initial_mag_scan()
+        assert captured[0].structure.uuid == process.inputs.mag_scan.structure.uuid
+
+    def test_returns_tocontext_with_mag_scan_wc_key(
+        self, generate_workchain, generate_structure, generate_kpoints_mesh,
+        fixture_code, pseudo_family,
+    ):
+        """run_initial_mag_scan must return ToContext keyed as 'mag_scan_wc'."""
+        from aiida.engine import ToContext
+        process = self._make_process(generate_workchain, generate_structure,
+                                     generate_kpoints_mesh, fixture_code, pseudo_family)
+        sentinel = MagicMock()
+        with patch.object(process, 'submit', return_value=sentinel), \
+             patch.object(process, 'report'):
+            result = process.run_initial_mag_scan()
+        assert isinstance(result, ToContext)
+        assert 'mag_scan_wc' in result
+        assert result['mag_scan_wc'] is sentinel
+
+    def test_walltime_override_applied_to_builder(
+        self, generate_workchain, generate_structure, generate_kpoints_mesh,
+        fixture_code, pseudo_family,
+    ):
+        """mag_scan_walltime_hours input must override walltime_hours on the submitted builder."""
+        from aiida.orm import Float
+        process = self._make_process(
+            generate_workchain, generate_structure, generate_kpoints_mesh,
+            fixture_code, pseudo_family,
+            extra_inputs={'mag_scan_walltime_hours': Float(9.9)},
+        )
+        captured = []
+        with patch.object(process, 'submit',
+                          side_effect=lambda b: captured.append(b) or MagicMock()), \
+             patch.object(process, 'report'):
+            process.run_initial_mag_scan()
+        assert float(captured[0].walltime_hours) == pytest.approx(9.9)
+
+    def test_hubbard_corr_atoms_forwarded(
+        self, generate_workchain, generate_structure, generate_kpoints_mesh,
+        fixture_code, pseudo_family,
+    ):
+        """hubbard_corr_atoms list must be forwarded unchanged from inputs.mag_scan."""
+        process = self._make_process(generate_workchain, generate_structure,
+                                     generate_kpoints_mesh, fixture_code, pseudo_family)
+        captured = []
+        with patch.object(process, 'submit',
+                          side_effect=lambda b: captured.append(b) or MagicMock()), \
+             patch.object(process, 'report'):
+            process.run_initial_mag_scan()
+        expected = process.inputs.mag_scan.hubbard_corr_atoms.get_list()
+        assert captured[0].hubbard_corr_atoms.get_list() == expected
+
+
+class TestProcessMagScanResults:
+    """Test the ``process_mag_scan_results`` step.
+
+    Strategy
+    --------
+    ``process_mag_scan_results`` reads outputs from ``ctx.mag_scan_wc`` and then calls
+    ``aiida_propose_occ_matrices_from_results`` to get the first batch of
+    proposals.  Both are replaced in tests:
+
+    * ``ctx.mag_scan_wc`` is set to a ``_mock_mag_scan_wc(...)`` stub that carries
+      pre-built ``List`` nodes as outputs - no real AFM calculation needed.
+
+    * ``aiida_propose_occ_matrices_from_results`` is patched at the
+      *import site* in the workflow module so that it returns a stored ``List``
+      of dummy PKs instead of running any actual proposal logic.
+
+    After calling the step we inspect ``ctx`` directly to verify that all
+    counters, lists, and generation-0 metadata were initialised correctly.
+    """
+
+    def _make_process(self, generate_workchain, generate_structure,
+                      generate_kpoints_mesh, fixture_code, pseudo_family,
+                      Nmax=10, N=3):
+        structure = generate_structure('feo')
+        kpoints = generate_kpoints_mesh(4)
+        pw_code = fixture_code('quantumespresso.pw')
+        constrained_code = fixture_code('lordcapulet.constrained_pw')
+        return generate_workchain(
+            GlobalConstrainedSearchWorkChain,
+            _global_inputs(structure, kpoints, pw_code, constrained_code, Nmax=Nmax, N=N),
+        )
+
+    def test_initialises_n_cumulative_to_zero(
+        self, generate_workchain, generate_structure, generate_kpoints_mesh,
+        fixture_code, pseudo_family,
+    ):
+        """process_mag_scan_results must set ctx.N_cumulative = 0."""
+        process = self._make_process(generate_workchain, generate_structure,
+                                     generate_kpoints_mesh, fixture_code, pseudo_family)
+        process.ctx.mag_scan_wc = _mock_mag_scan_wc([1, 2], [10, 11])
+
+        with patch('lordcapulet.workflows.global_constrained_search.aiida_propose_occ_matrices_from_results',
+                   return_value=_stored_list([101, 102, 103])), \
+             patch.object(process, 'report'):
+            process.process_mag_scan_results()
+
+        assert process.ctx.N_cumulative == 0
+
+    def test_initialises_generation_to_zero(
+        self, generate_workchain, generate_structure, generate_kpoints_mesh,
+        fixture_code, pseudo_family,
+    ):
+        """process_mag_scan_results must set ctx.generation = 0."""
+        process = self._make_process(generate_workchain, generate_structure,
+                                     generate_kpoints_mesh, fixture_code, pseudo_family)
+        process.ctx.mag_scan_wc = _mock_mag_scan_wc([1, 2], [10, 11])
+
+        with patch('lordcapulet.workflows.global_constrained_search.aiida_propose_occ_matrices_from_results',
+                   return_value=_stored_list([101, 102, 103])), \
+             patch.object(process, 'report'):
+            process.process_mag_scan_results()
+
+        assert process.ctx.generation == 0
+
+    def test_stores_generation_0_results(
+        self, generate_workchain, generate_structure, generate_kpoints_mesh,
+        fixture_code, pseudo_family,
+    ):
+        """process_mag_scan_results must populate ctx.generation_results[0] with magnetic scan data."""
+        process = self._make_process(generate_workchain, generate_structure,
+                                     generate_kpoints_mesh, fixture_code, pseudo_family)
+        process.ctx.mag_scan_wc = _mock_mag_scan_wc([1, 2], [10, 11])
+
+        with patch('lordcapulet.workflows.global_constrained_search.aiida_propose_occ_matrices_from_results',
+                   return_value=_stored_list([101, 102, 103])), \
+             patch.object(process, 'report'):
+            process.process_mag_scan_results()
+
+        assert 0 in process.ctx.generation_results
+        gen0 = process.ctx.generation_results[0]
+        assert gen0['type'] == 'mag_scan'
+        assert gen0['n_calculations'] == 2
+        assert gen0['converged_matrix_pks'] == [1, 2]
+        assert gen0['converged_calculation_pks'] == [10, 11]
+
+    def test_sets_ctx_converged_matrix_pks_from_afm(
+        self, generate_workchain, generate_structure, generate_kpoints_mesh,
+        fixture_code, pseudo_family,
+    ):
+        """ctx.converged_matrix_pks should be seeded with the AFM matrix PKs."""
+        process = self._make_process(generate_workchain, generate_structure,
+                                     generate_kpoints_mesh, fixture_code, pseudo_family)
+        process.ctx.mag_scan_wc = _mock_mag_scan_wc([1, 2], [10, 11])
+
+        with patch('lordcapulet.workflows.global_constrained_search.aiida_propose_occ_matrices_from_results',
+                   return_value=_stored_list([101, 102, 103])), \
+             patch.object(process, 'report'):
+            process.process_mag_scan_results()
+
+        assert process.ctx.converged_matrix_pks == [1, 2]
+
+    def test_sets_ctx_all_calculation_pks_from_afm(
+        self, generate_workchain, generate_structure, generate_kpoints_mesh,
+        fixture_code, pseudo_family,
+    ):
+        """ctx.all_calculation_pks should be seeded with the AFM calculation PKs."""
+        process = self._make_process(generate_workchain, generate_structure,
+                                     generate_kpoints_mesh, fixture_code, pseudo_family)
+        process.ctx.mag_scan_wc = _mock_mag_scan_wc([1, 2], [10, 11], all_calc_pks=[10, 11])
+
+        with patch('lordcapulet.workflows.global_constrained_search.aiida_propose_occ_matrices_from_results',
+                   return_value=_stored_list([101, 102, 103])), \
+             patch.object(process, 'report'):
+            process.process_mag_scan_results()
+
+        assert process.ctx.all_calculation_pks == [10, 11]
+
+    def test_calls_proposal_function(
+        self, generate_workchain, generate_structure, generate_kpoints_mesh,
+        fixture_code, pseudo_family,
+    ):
+        """process_mag_scan_results must invoke aiida_propose_occ_matrices_from_results exactly once."""
+        process = self._make_process(generate_workchain, generate_structure,
+                                     generate_kpoints_mesh, fixture_code, pseudo_family)
+        process.ctx.mag_scan_wc = _mock_mag_scan_wc([1, 2], [10, 11])
+
+        with patch('lordcapulet.workflows.global_constrained_search.aiida_propose_occ_matrices_from_results',
+                   return_value=_stored_list([101, 102, 103])) as mock_propose, \
+             patch.object(process, 'report'):
+            process.process_mag_scan_results()
+
+        assert mock_propose.called
+        assert mock_propose.call_count == 1
+
+    def test_sets_current_proposals_from_proposal_function(
+        self, generate_workchain, generate_structure, generate_kpoints_mesh,
+        fixture_code, pseudo_family,
+    ):
+        """ctx.current_proposals must equal the list returned by the proposal function."""
+        process = self._make_process(generate_workchain, generate_structure,
+                                     generate_kpoints_mesh, fixture_code, pseudo_family)
+        process.ctx.mag_scan_wc = _mock_mag_scan_wc([1, 2], [10, 11])
+        proposals = [301, 302, 303]
+
+        with patch('lordcapulet.workflows.global_constrained_search.aiida_propose_occ_matrices_from_results',
+                   return_value=_stored_list(proposals)), \
+             patch.object(process, 'report'):
+            process.process_mag_scan_results()
+
+        assert process.ctx.current_proposals == proposals
+
+    def test_stores_proposal_metadata_from_proposal_node(
+        self, generate_workchain, generate_structure, generate_kpoints_mesh,
+        fixture_code, pseudo_family,
+    ):
+        """process_mag_scan_results should remember the source of the next batch."""
+        process = self._make_process(generate_workchain, generate_structure,
+                                     generate_kpoints_mesh, fixture_code, pseudo_family)
+        process.ctx.mag_scan_wc = _mock_mag_scan_wc([1, 2], [10, 11])
+        proposal_node = _proposal_list(
+            [301, 302],
+            proposal_source='random_warmup',
+            proposal_mode='gp',
+            proposal_generation=0,
+        )
+
+        with patch('lordcapulet.workflows.global_constrained_search.aiida_propose_occ_matrices_from_results',
+                   return_value=proposal_node), \
+             patch.object(process, 'report'):
+            process.process_mag_scan_results()
+
+        assert process.ctx.current_proposal_metadata['proposal_source'] == 'random_warmup'
+        assert process.ctx.current_proposal_metadata['proposal_mode'] == 'gp'
+        assert process.ctx.current_proposal_metadata['proposal_generation'] == 0
+
+    def test_returns_error_if_afm_failed(
+        self, generate_workchain, generate_structure, generate_kpoints_mesh,
+        fixture_code, pseudo_family,
+    ):
+        """process_mag_scan_results must return ERROR_MAG_SCAN_FAILED when afm_wc fails."""
+        process = self._make_process(generate_workchain, generate_structure,
+                                     generate_kpoints_mesh, fixture_code, pseudo_family)
+        failed_wc = MagicMock()
+        failed_wc.is_finished_ok = False
+        failed_wc.exit_status = 1
+        process.ctx.mag_scan_wc = failed_wc
+
+        with patch.object(process, 'report'):
+            result = process.process_mag_scan_results()
+
+        assert result == process.exit_codes.ERROR_MAG_SCAN_FAILED
+
+    def test_current_generation_always_forwarded_to_proposal_function(
+        self, generate_workchain, generate_structure, generate_kpoints_mesh,
+        fixture_code, pseudo_family,
+    ):
+        """current_generation must be forwarded even when proposal_kwargs is absent.
+
+        Regression test: previously current_generation was only added inside the
+        ``if 'proposal_kwargs' in self.inputs`` guard.  When no proposal_kwargs
+        was provided (e.g. random_so_n mode) current_generation was silently
+        dropped, causing an AssertionError in GP mode on the first proposal call.
+        """
+        process = self._make_process(generate_workchain, generate_structure,
+                                     generate_kpoints_mesh, fixture_code, pseudo_family)
+        process.ctx.mag_scan_wc = _mock_mag_scan_wc([1, 2], [10, 11])
+
+        with patch('lordcapulet.workflows.global_constrained_search.aiida_propose_occ_matrices_from_results',
+                   return_value=_stored_list([101, 102, 103])) as mock_propose, \
+             patch.object(process, 'report'):
+            process.process_mag_scan_results()
+
+        _, call_kwargs = mock_propose.call_args
+        assert 'current_generation' in call_kwargs, (
+            'current_generation must always be forwarded to the proposal function'
+        )
+        assert call_kwargs['current_generation'].value == 0
+
+
+class TestImportSeedResults:
+    """Test seeded startup from a previous global workchain."""
+
+    def _make_process(self, generate_workchain, generate_structure,
+                      generate_kpoints_mesh, fixture_code, pseudo_family,
+                      Nmax=10, N=3, proposal_holistic=False):
+        structure = generate_structure('feo')
+        kpoints = generate_kpoints_mesh(4)
+        pw_code = fixture_code('quantumespresso.pw')
+        constrained_code = fixture_code('lordcapulet.constrained_pw')
+        return generate_workchain(
+            GlobalConstrainedSearchWorkChain,
+            _global_inputs(
+                structure,
+                kpoints,
+                pw_code,
+                constrained_code,
+                Nmax=Nmax,
+                N=N,
+                startup_mode='seeded',
+                seed_global_workchain_pk=123,
+                proposal_mode='gp',
+                proposal_holistic=proposal_holistic,
+            ),
+        )
+
+    def test_imports_complete_parent_outputs_and_proposes_from_mag_scan_plus_random_warmup(
+        self, generate_workchain, generate_structure, generate_kpoints_mesh,
+        fixture_code, pseudo_family,
+    ):
+        process = self._make_process(
+            generate_workchain, generate_structure, generate_kpoints_mesh,
+            fixture_code, pseudo_family,
+            Nmax=10,
+        )
+        summary = _stored_dict({
+            'Generation 0': {
+                'type': 'mag_scan',
+                'n_calculations': 2,
+                'converged_matrix_pks': [1, 2],
+                'converged_calculation_pks': [10, 11],
+            },
+            'Generation 1': {
+                'type': 'constrained',
+                'n_calculations': 3,
+                'n_successful': 1,
+                'n_failed': 2,
+                'matrix_pks': [201],
+                'calculation_pks': [301, 302, 303],
+                'converged_calculation_pks': [301],
+            },
+        })
+        previous = _mock_previous_global(outputs=_FakeOutputs(
+            converged_matrix_pks=_stored_list([1, 2, 201]),
+            converged_calculation_pks=_stored_list([10, 11, 301]),
+            all_calculation_pks=_stored_list([10, 11, 301, 302, 303]),
+            generation_summary=summary,
+        ))
+
+        with patch('lordcapulet.workflows.global_constrained_search.load_node',
+                   return_value=previous), \
+             patch('lordcapulet.workflows.global_constrained_search.aiida_propose_occ_matrices_from_results',
+                   return_value=_proposal_list([401, 402],
+                                               proposal_source='gp',
+                                               proposal_mode='gp',
+                                               proposal_generation=1)) as mock_propose, \
+             patch.object(process, 'report'):
+            result = process.import_seed_results()
+
+        assert result is None
+        assert process.ctx.N_cumulative == 0
+        assert process.ctx.imported_constrained_attempts == 3
+        assert process.ctx.generation == 1
+        assert process.ctx.converged_matrix_pks == [1, 2, 201]
+        assert process.ctx.converged_calculation_pks == [10, 11, 301]
+        assert process.ctx.all_calculation_pks == [10, 11, 301, 302, 303]
+        assert process.ctx.generation_results[0]['imported_seed'] is True
+        assert process.ctx.generation_results[1]['imported_seed'] is True
+        assert process.ctx.current_proposals == [401, 402]
+
+        _, call_kwargs = mock_propose.call_args
+        assert call_kwargs['occ_matr_pks'].get_list() == [1, 2, 201]
+        assert call_kwargs['calc_pks'].get_list() == [10, 11, 301]
+        assert call_kwargs['current_generation'].value == 1
+
+    def test_seed_import_ignores_holistic_and_excludes_prior_gp_generations(
+        self, generate_workchain, generate_structure, generate_kpoints_mesh,
+        fixture_code, pseudo_family,
+    ):
+        process = self._make_process(
+            generate_workchain, generate_structure, generate_kpoints_mesh,
+            fixture_code, pseudo_family,
+            Nmax=10,
+            proposal_holistic=True,
+        )
+        summary = _stored_dict({
+            'Generation 0': {
+                'type': 'mag_scan',
+                'n_calculations': 2,
+                'converged_matrix_pks': [1, 2],
+                'converged_calculation_pks': [10, 11],
+            },
+            'Generation 1': {
+                'type': 'constrained',
+                'proposal_source': 'random_warmup',
+                'n_calculations': 3,
+                'n_successful': 1,
+                'n_failed': 2,
+                'matrix_pks': [201],
+                'calculation_pks': [301, 302, 303],
+                'converged_calculation_pks': [301],
+            },
+            'Generation 2': {
+                'type': 'constrained',
+                'proposal_source': 'gp',
+                'n_calculations': 2,
+                'n_successful': 1,
+                'n_failed': 1,
+                'matrix_pks': [202],
+                'calculation_pks': [304, 305],
+                'converged_calculation_pks': [304],
+            },
+        })
+        previous = _mock_previous_global(outputs=_FakeOutputs(
+            converged_matrix_pks=_stored_list([1, 2, 201, 202]),
+            converged_calculation_pks=_stored_list([10, 11, 301, 304]),
+            all_calculation_pks=_stored_list([10, 11, 301, 302, 303, 304, 305]),
+            generation_summary=summary,
+        ))
+
+        with patch('lordcapulet.workflows.global_constrained_search.load_node',
+                   return_value=previous), \
+             patch('lordcapulet.workflows.global_constrained_search.aiida_propose_occ_matrices_from_results',
+                   return_value=_proposal_list([401], proposal_source='gp')) as mock_propose, \
+             patch.object(process, 'report'):
+            result = process.import_seed_results()
+
+        assert result is None
+        _, call_kwargs = mock_propose.call_args
+        assert call_kwargs['occ_matr_pks'].get_list() == [1, 2, 201]
+        assert call_kwargs['calc_pks'].get_list() == [10, 11, 301]
+
+    def test_imported_constrained_attempts_do_not_consume_nmax(
+        self, generate_workchain, generate_structure, generate_kpoints_mesh,
+        fixture_code, pseudo_family,
+    ):
+        process = self._make_process(
+            generate_workchain, generate_structure, generate_kpoints_mesh,
+            fixture_code, pseudo_family,
+            Nmax=3,
+        )
+        previous = _mock_previous_global(outputs=_FakeOutputs(
+            converged_matrix_pks=_stored_list([1, 201]),
+            converged_calculation_pks=_stored_list([10, 301]),
+            all_calculation_pks=_stored_list([10, 301, 302, 303]),
+            generation_summary=_stored_dict({
+                'Generation 0': {
+                    'type': 'mag_scan',
+                    'n_calculations': 1,
+                    'converged_matrix_pks': [1],
+                    'converged_calculation_pks': [10],
+                },
+                'Generation 1': {
+                    'type': 'constrained',
+                    'n_calculations': 3,
+                    'n_successful': 1,
+                    'n_failed': 2,
+                    'matrix_pks': [201],
+                    'calculation_pks': [301, 302, 303],
+                    'converged_calculation_pks': [301],
+                },
+            }),
+        ))
+
+        with patch('lordcapulet.workflows.global_constrained_search.load_node',
+                   return_value=previous), \
+             patch('lordcapulet.workflows.global_constrained_search.aiida_propose_occ_matrices_from_results',
+                   return_value=_proposal_list([401, 402],
+                                               proposal_source='gp',
+                                               proposal_mode='gp',
+                                               proposal_generation=1)) as mock_propose, \
+             patch.object(process, 'report'):
+            result = process.import_seed_results()
+
+        assert result is None
+        assert process.ctx.N_cumulative == 0
+        assert process.ctx.imported_constrained_attempts == 3
+        assert mock_propose.called
+        assert process.should_continue_search() is True
+        assert process.ctx.current_proposals == [401, 402]
+
+    def test_reconstructs_from_called_children_when_parent_outputs_are_missing(
+        self, generate_workchain, generate_structure, generate_kpoints_mesh,
+        fixture_code, pseudo_family,
+    ):
+        process = self._make_process(
+            generate_workchain, generate_structure, generate_kpoints_mesh,
+            fixture_code, pseudo_family,
+            Nmax=10,
+        )
+        mag = _mock_mag_scan_wc([1, 2], [10, 11])
+        mag.process_type = 'lordcapulet.workflows.standard_magnetic_scan.StandardMagneticScanWorkChain'
+        con1 = _mock_constrained_wc([201], [301, 302], converged_calc_pks=[301])
+        con1.process_type = 'lordcapulet.workflows.constrained_scan.ConstrainedScanWorkChain'
+        con2 = _mock_constrained_wc([202], [303], converged_calc_pks=[303])
+        con2.process_type = 'lordcapulet.workflows.constrained_scan.ConstrainedScanWorkChain'
+        previous = _mock_previous_global(called=[mag, con1, con2])
+
+        with patch('lordcapulet.workflows.global_constrained_search.load_node',
+                   return_value=previous), \
+             patch('lordcapulet.workflows.global_constrained_search.aiida_propose_occ_matrices_from_results',
+                   return_value=_proposal_list([401], proposal_source='gp')) as mock_propose, \
+             patch.object(process, 'report'):
+            result = process.import_seed_results()
+
+        assert result is None
+        assert process.ctx.generation == 2
+        assert process.ctx.N_cumulative == 0
+        assert process.ctx.imported_constrained_attempts == 3
+        assert process.ctx.generation_results[0]['type'] == 'mag_scan'
+        assert process.ctx.generation_results[1]['proposal_source'] == 'random_warmup'
+        assert process.ctx.generation_results[2]['proposal_source'] == 'gp'
+        assert process.ctx.generation_results[1]['imported_seed'] is True
+        assert process.ctx.generation_results[2]['imported_seed'] is True
+
+        _, call_kwargs = mock_propose.call_args
+        assert call_kwargs['occ_matr_pks'].get_list() == [1, 2, 201]
+        assert call_kwargs['calc_pks'].get_list() == [10, 11, 301]
+        assert call_kwargs['current_generation'].value == 2
+
+    def test_returns_error_when_seed_data_cannot_be_recovered(
+        self, generate_workchain, generate_structure, generate_kpoints_mesh,
+        fixture_code, pseudo_family,
+    ):
+        process = self._make_process(
+            generate_workchain, generate_structure, generate_kpoints_mesh,
+            fixture_code, pseudo_family,
+            Nmax=10,
+        )
+        previous = _mock_previous_global()
+
+        with patch('lordcapulet.workflows.global_constrained_search.load_node',
+                   return_value=previous), \
+             patch.object(process, 'report'):
+            result = process.import_seed_results()
+
+        assert result == process.exit_codes.ERROR_SEED_IMPORT_FAILED
+
+
+class TestRunConstrainedBatch:
+    """Test the ``run_constrained_batch`` step.
+
+    Strategy
+    --------
+    ``run_constrained_batch`` increments the generation counter, slices
+    ``ctx.current_proposals`` down to the remaining budget, builds a
+    ``ConstrainedScanWorkChain`` builder, and calls ``self.submit``.
+
+    We inject ``ctx`` state directly (generation, N_cumulative, proposals)
+    and patch ``submit`` to capture the builder without launching anything.
+    The key assertions are:
+
+    * Generation counter incremented.
+    * ``occupation_matrices_list`` = first N (or remaining budget) proposals.
+    * ``submit`` called exactly once per batch.
+    """
+
+    def _make_process(self, generate_workchain, generate_structure,
+                      generate_kpoints_mesh, fixture_code, pseudo_family,
+                      Nmax=10, N=3):
+        structure = generate_structure('feo')
+        kpoints = generate_kpoints_mesh(4)
+        pw_code = fixture_code('quantumespresso.pw')
+        constrained_code = fixture_code('lordcapulet.constrained_pw')
+        return generate_workchain(
+            GlobalConstrainedSearchWorkChain,
+            _global_inputs(structure, kpoints, pw_code, constrained_code, Nmax=Nmax, N=N),
+        )
+
+    def _init_ctx(self, process, generation=0, n_cumulative=0, proposals=None):
+        """Inject the minimal ctx state that run_constrained_batch reads.
+
+        ``generation``   -- the step starts by incrementing this.
+        ``n_cumulative`` -- controls the remaining budget = Nmax - n_cumulative,
+                            which determines how many proposals are actually used.
+        ``current_proposals`` -- list of PK integers that the step slices to
+                                  feed the ConstrainedScanWorkChain.
+        """
+        process.ctx.generation = generation
+        process.ctx.N_cumulative = n_cumulative
+        process.ctx.current_proposals = proposals or list(range(101, 110))  # 9 fake PKs
+
+    def test_increments_generation_counter(
+        self, generate_workchain, generate_structure, generate_kpoints_mesh,
+        fixture_code, pseudo_family,
+    ):
+        """run_constrained_batch must increment ctx.generation by 1."""
+        process = self._make_process(generate_workchain, generate_structure,
+                                     generate_kpoints_mesh, fixture_code, pseudo_family)
+        self._init_ctx(process, generation=0)
+
+        with patch.object(process, 'submit', return_value=MagicMock()), \
+             patch.object(process, 'report'):
+            process.run_constrained_batch()
+
+        assert process.ctx.generation == 1
+
+    def test_increments_from_nonzero_generation(
+        self, generate_workchain, generate_structure, generate_kpoints_mesh,
+        fixture_code, pseudo_family,
+    ):
+        """run_constrained_batch increments generation regardless of starting value."""
+        process = self._make_process(generate_workchain, generate_structure,
+                                     generate_kpoints_mesh, fixture_code, pseudo_family)
+        self._init_ctx(process, generation=2)
+
+        with patch.object(process, 'submit', return_value=MagicMock()), \
+             patch.object(process, 'report'):
+            process.run_constrained_batch()
+
+        assert process.ctx.generation == 3
+
+    def test_submit_called_exactly_once(
+        self, generate_workchain, generate_structure, generate_kpoints_mesh,
+        fixture_code, pseudo_family,
+    ):
+        """run_constrained_batch must call submit exactly once (one ConstrainedScan per batch)."""
+        process = self._make_process(generate_workchain, generate_structure,
+                                     generate_kpoints_mesh, fixture_code, pseudo_family)
+        self._init_ctx(process)
+
+        with patch.object(process, 'submit', return_value=MagicMock()) as mock_sub, \
+             patch.object(process, 'report'):
+            process.run_constrained_batch()
+
+        mock_sub.assert_called_once()
+
+    def test_proposals_sliced_to_n(
+        self, generate_workchain, generate_structure, generate_kpoints_mesh,
+        fixture_code, pseudo_family,
+    ):
+        """occupation_matrices_list passed to ConstrainedScan must be capped at N proposals."""
+        # N=3, Nmax=10, N_cumulative=0 → n_proposals = min(3, 10-0) = 3
+        process = self._make_process(generate_workchain, generate_structure,
+                                     generate_kpoints_mesh, fixture_code, pseudo_family,
+                                     Nmax=10, N=3)
+        proposals = list(range(201, 210))  # 9 proposals, only 3 should be used
+        self._init_ctx(process, n_cumulative=0, proposals=proposals)
+
+        captured = {}
+
+        def _capture(builder):
+            captured['occ_list'] = builder.occupation_matrices_list.get_list()
+            return MagicMock()
+
+        with patch.object(process, 'submit', side_effect=_capture), \
+             patch.object(process, 'report'):
+            process.run_constrained_batch()
+
+        assert len(captured['occ_list']) == 3
+        assert captured['occ_list'] == proposals[:3]
+
+    def test_proposals_capped_when_near_nmax(
+        self, generate_workchain, generate_structure, generate_kpoints_mesh,
+        fixture_code, pseudo_family,
+    ):
+        """When remaining budget < N, proposals must be capped at remaining budget."""
+        # N=3, Nmax=10, N_cumulative=8 → n_proposals = min(3, 10-8) = 2
+        process = self._make_process(generate_workchain, generate_structure,
+                                     generate_kpoints_mesh, fixture_code, pseudo_family,
+                                     Nmax=10, N=3)
+        proposals = list(range(201, 210))
+        self._init_ctx(process, n_cumulative=8, proposals=proposals)
+
+        captured = {}
+
+        def _capture(builder):
+            captured['occ_list'] = builder.occupation_matrices_list.get_list()
+            return MagicMock()
+
+        with patch.object(process, 'submit', side_effect=_capture), \
+             patch.object(process, 'report'):
+            process.run_constrained_batch()
+
+        assert len(captured['occ_list']) == 2
+        assert captured['occ_list'] == proposals[:2]
+
+    def test_gp_random_warmup_batch_uses_all_warmup_proposals(
+        self, generate_workchain, generate_structure, generate_kpoints_mesh,
+        fixture_code, pseudo_family,
+    ):
+        """A GP warmup batch uses ``N_initial_random`` proposals, not regular ``N``."""
+        process = self._make_process(
+            generate_workchain, generate_structure, generate_kpoints_mesh,
+            fixture_code, pseudo_family,
+            Nmax=400,
+            N=20,
+        )
+        proposals = list(range(1000, 1200))
+        self._init_ctx(process, n_cumulative=0, proposals=proposals)
+        process.ctx.current_proposal_metadata = {
+            'proposal_source': 'random_warmup',
+            'proposal_mode': 'gp',
+            'proposal_generation': 0,
+        }
+        captured = {}
+
+        def _capture(builder):
+            captured['occ_list'] = builder.occupation_matrices_list.get_list()
+            return MagicMock()
+
+        with patch.object(process, 'submit', side_effect=_capture), \
+             patch.object(process, 'report'):
+            process.run_constrained_batch()
+
+        assert len(captured['occ_list']) == 200
+        assert captured['occ_list'] == proposals
+
+    def test_gp_random_warmup_batch_is_capped_by_nmax(
+        self, generate_workchain, generate_structure, generate_kpoints_mesh,
+        fixture_code, pseudo_family,
+    ):
+        """If warmup is larger than the total budget, only ``Nmax`` proposals run."""
+        process = self._make_process(
+            generate_workchain, generate_structure, generate_kpoints_mesh,
+            fixture_code, pseudo_family,
+            Nmax=50,
+            N=20,
+        )
+        proposals = list(range(1000, 1200))
+        self._init_ctx(process, n_cumulative=0, proposals=proposals)
+        process.ctx.current_proposal_metadata = {
+            'proposal_source': 'random_warmup',
+            'proposal_mode': 'gp',
+            'proposal_generation': 0,
+        }
+        captured = {}
+
+        def _capture(builder):
+            captured['occ_list'] = builder.occupation_matrices_list.get_list()
+            return MagicMock()
+
+        with patch.object(process, 'submit', side_effect=_capture), \
+             patch.object(process, 'report'):
+            process.run_constrained_batch()
+
+        assert len(captured['occ_list']) == 50
+        assert captured['occ_list'] == proposals[:50]
+
+    def test_submitted_constrained_scan_gets_proposal_extras(
+        self, generate_workchain, generate_structure, generate_kpoints_mesh,
+        fixture_code, pseudo_family,
+    ):
+        """run_constrained_batch should persist proposal provenance on the child scan."""
+        process = self._make_process(generate_workchain, generate_structure,
+                                     generate_kpoints_mesh, fixture_code, pseudo_family)
+        self._init_ctx(process, generation=0, proposals=[201, 202, 203])
+        process.ctx.current_proposal_metadata = {
+            'proposal_source': 'random_warmup',
+            'proposal_mode': 'gp',
+            'proposal_generation': 0,
+        }
+
+        future = MagicMock()
+
+        with patch.object(process, 'submit', return_value=future), \
+             patch.object(process, 'report'):
+            process.run_constrained_batch()
+
+        future.base.extras.set.assert_any_call('proposal_source', 'random_warmup')
+        future.base.extras.set.assert_any_call('proposal_mode', 'gp')
+        future.base.extras.set.assert_any_call('proposal_generation', 0)
+        future.base.extras.set.assert_any_call('constrained_generation', 1)
+
+
+class TestProcessConstrainedResults:
+    """Test the ``process_constrained_results`` step.
+
+    Strategy
+    --------
+    ``process_constrained_results`` reads outputs from
+    ``ctx.constrained_wc``, updates several ``ctx`` lists, and-if the
+    cumulative count is below ``Nmax``-calls
+    ``aiida_propose_occ_matrices_from_results`` to generate the next batch.
+
+    We set ``ctx.constrained_wc`` to a ``_mock_constrained_wc`` stub and
+    patch the proposal function.  The tests then check:
+
+    * ``ctx.generation_results`` is populated with the correct metadata.
+    * ``ctx.converged_matrix_pks`` and ``ctx.all_calculation_pks`` are
+      extended (not replaced) with the new PKs.
+    * The proposal function is called IFF ``N_cumulative + n_total < Nmax``.
+    * ``ctx.current_proposals`` is updated from the proposal-function return.
+    """
+
+    def _make_process(self, generate_workchain, generate_structure,
+                      generate_kpoints_mesh, fixture_code, pseudo_family,
+                      Nmax=10, N=3):
+        structure = generate_structure('feo')
+        kpoints = generate_kpoints_mesh(4)
+        pw_code = fixture_code('quantumespresso.pw')
+        constrained_code = fixture_code('lordcapulet.constrained_pw')
+        return generate_workchain(
+            GlobalConstrainedSearchWorkChain,
+            _global_inputs(structure, kpoints, pw_code, constrained_code, Nmax=Nmax, N=N),
+        )
+
+    def _init_ctx(self, process, *, generation=1, n_cumulative=0,
+                  converged_matrix_pks=None, converged_calc_pks=None,
+                  all_calc_pks=None):
+        """Inject the ctx state that process_constrained_results reads and extends.
+
+        We seed each cumulative list with at least one pre-existing entry (from
+        the fake generation 0 AFM step) so that tests verifying *extension*
+        (not replacement) of the lists can check the original entry is still
+        present alongside the new ones added by the constrained step.
+        """
+        process.ctx.generation = generation
+        # N_cumulative is the number of calculations run *before* this step;
+        # the proposal-function call guard is: N_cumulative + n_new < Nmax
+        process.ctx.N_cumulative = n_cumulative
+        # Cumulative lists from all previous generations (AFM + constrained)
+        process.ctx.converged_matrix_pks = list(converged_matrix_pks or [1])
+        process.ctx.converged_calculation_pks = list(converged_calc_pks or [10])
+        process.ctx.all_calculation_pks = list(all_calc_pks or [10])
+        # generation_results[0] represents the AFM generation (type='afm')
+        process.ctx.generation_results = {
+            0: {'type': 'mag_scan', 'n_calculations': 1,
+                'converged_matrix_pks': [1], 'converged_calculation_pks': [10]}
+        }
+
+    def test_stores_generation_results(
+        self, generate_workchain, generate_structure, generate_kpoints_mesh,
+        fixture_code, pseudo_family,
+    ):
+        """process_constrained_results must store results under ctx.generation_results[generation]."""
+        process = self._make_process(generate_workchain, generate_structure,
+                                     generate_kpoints_mesh, fixture_code, pseudo_family)
+        self._init_ctx(process, generation=1, n_cumulative=0)
+        process.ctx.constrained_wc = _mock_constrained_wc([201, 202], [301, 302])
+
+        with patch('lordcapulet.workflows.global_constrained_search.aiida_propose_occ_matrices_from_results',
+                   return_value=_stored_list([401, 402, 403])), \
+             patch.object(process, 'report'):
+            process.process_constrained_results()
+
+        assert 1 in process.ctx.generation_results
+        gen1 = process.ctx.generation_results[1]
+        assert gen1['type'] == 'constrained'
+        assert gen1['n_calculations'] == 2
+        assert gen1['matrix_pks'] == [201, 202]
+
+    def test_generation_results_include_proposal_source(
+        self, generate_workchain, generate_structure, generate_kpoints_mesh,
+        fixture_code, pseudo_family,
+    ):
+        """The final generation summary should carry the batch proposal source."""
+        process = self._make_process(generate_workchain, generate_structure,
+                                     generate_kpoints_mesh, fixture_code, pseudo_family)
+        self._init_ctx(process, generation=1, n_cumulative=0)
+        process.ctx.current_batch_proposal_metadata = {
+            'proposal_source': 'random_warmup',
+            'proposal_mode': 'gp',
+            'proposal_generation': 0,
+            'constrained_generation': 1,
+        }
+        process.ctx.constrained_wc = _mock_constrained_wc([201, 202], [301, 302])
+
+        with patch('lordcapulet.workflows.global_constrained_search.aiida_propose_occ_matrices_from_results',
+                   return_value=_stored_list([401, 402, 403])), \
+             patch.object(process, 'report'):
+            process.process_constrained_results()
+
+        gen1 = process.ctx.generation_results[1]
+        assert gen1['proposal_source'] == 'random_warmup'
+        assert gen1['proposal_mode'] == 'gp'
+        assert gen1['proposal_generation'] == 0
+
+    def test_extends_converged_matrix_pks(
+        self, generate_workchain, generate_structure, generate_kpoints_mesh,
+        fixture_code, pseudo_family,
+    ):
+        """ctx.converged_matrix_pks must grow by the new converged matrices."""
+        process = self._make_process(generate_workchain, generate_structure,
+                                     generate_kpoints_mesh, fixture_code, pseudo_family)
+        self._init_ctx(process, generation=1, n_cumulative=0, converged_matrix_pks=[1])
+        process.ctx.constrained_wc = _mock_constrained_wc([201, 202], [301, 302])
+
+        with patch('lordcapulet.workflows.global_constrained_search.aiida_propose_occ_matrices_from_results',
+                   return_value=_stored_list([401, 402, 403])), \
+             patch.object(process, 'report'):
+            process.process_constrained_results()
+
+        assert 201 in process.ctx.converged_matrix_pks
+        assert 202 in process.ctx.converged_matrix_pks
+        assert 1 in process.ctx.converged_matrix_pks  # original AFM entry retained
+
+    def test_extends_all_calculation_pks(
+        self, generate_workchain, generate_structure, generate_kpoints_mesh,
+        fixture_code, pseudo_family,
+    ):
+        """ctx.all_calculation_pks must include the new calculation PKs."""
+        process = self._make_process(generate_workchain, generate_structure,
+                                     generate_kpoints_mesh, fixture_code, pseudo_family)
+        self._init_ctx(process, generation=1, n_cumulative=0,
+                       all_calc_pks=[10])
+        process.ctx.constrained_wc = _mock_constrained_wc([201, 202], [301, 302])
+
+        with patch('lordcapulet.workflows.global_constrained_search.aiida_propose_occ_matrices_from_results',
+                   return_value=_stored_list([401, 402, 403])), \
+             patch.object(process, 'report'):
+            process.process_constrained_results()
+
+        assert 301 in process.ctx.all_calculation_pks
+        assert 302 in process.ctx.all_calculation_pks
+        assert 10 in process.ctx.all_calculation_pks  # original retained
+
+    def test_proposal_function_called_when_below_nmax(
+        self, generate_workchain, generate_structure, generate_kpoints_mesh,
+        fixture_code, pseudo_family,
+    ):
+        """Proposal function must be called when N_cumulative + n_calc_total < Nmax."""
+        # N_cumulative=0, n_total=2, Nmax=10 → 0+2=2 < 10 → proposal called
+        process = self._make_process(generate_workchain, generate_structure,
+                                     generate_kpoints_mesh, fixture_code, pseudo_family,
+                                     Nmax=10)
+        self._init_ctx(process, generation=1, n_cumulative=0)
+        process.ctx.constrained_wc = _mock_constrained_wc([201, 202], [301, 302])
+
+        with patch('lordcapulet.workflows.global_constrained_search.aiida_propose_occ_matrices_from_results',
+                   return_value=_stored_list([401, 402, 403])) as mock_propose, \
+             patch.object(process, 'report'):
+            process.process_constrained_results()
+
+        assert mock_propose.called
+
+    def test_proposal_function_not_called_when_at_nmax(
+        self, generate_workchain, generate_structure, generate_kpoints_mesh,
+        fixture_code, pseudo_family,
+    ):
+        """Proposal function must NOT be called when N_cumulative + n_calc_total >= Nmax."""
+        # N_cumulative=8, n_total=2, Nmax=10 → 8+2=10 NOT < 10 → proposal skipped
+        process = self._make_process(generate_workchain, generate_structure,
+                                     generate_kpoints_mesh, fixture_code, pseudo_family,
+                                     Nmax=10)
+        self._init_ctx(process, generation=1, n_cumulative=8)
+        process.ctx.constrained_wc = _mock_constrained_wc([201, 202], [301, 302])
+
+        with patch('lordcapulet.workflows.global_constrained_search.aiida_propose_occ_matrices_from_results',
+                   return_value=_stored_list([401, 402, 403])) as mock_propose, \
+             patch.object(process, 'report'):
+            process.process_constrained_results()
+
+        assert not mock_propose.called
+
+    def test_updates_current_proposals_from_proposal_function(
+        self, generate_workchain, generate_structure, generate_kpoints_mesh,
+        fixture_code, pseudo_family,
+    ):
+        """ctx.current_proposals must be updated from the proposal function return value."""
+        process = self._make_process(generate_workchain, generate_structure,
+                                     generate_kpoints_mesh, fixture_code, pseudo_family)
+        self._init_ctx(process, generation=1, n_cumulative=0)
+        process.ctx.constrained_wc = _mock_constrained_wc([201, 202], [301, 302])
+        new_proposals = [401, 402, 403]
+
+        with patch('lordcapulet.workflows.global_constrained_search.aiida_propose_occ_matrices_from_results',
+                   return_value=_stored_list(new_proposals)), \
+             patch.object(process, 'report'):
+            process.process_constrained_results()
+
+        assert process.ctx.current_proposals == new_proposals
+
+
+class TestGatherFinalResults:
+    """Test the ``gather_final_results`` step.
+
+    Strategy
+    --------
+    ``gather_final_results`` does not interact with the scheduler or any
+    sub-workchains.  It only reads from ``ctx`` and creates / stores new
+    ``List`` and ``Dict`` nodes, then calls ``self.out`` to register them.
+
+    We initialise ``ctx`` with pre-built lists of PKs (using plain integers
+    - no real nodes needed, the step just stores them in new List nodes) and
+    patch ``self.out`` with ``_capture_out_factory`` to intercept the four
+    emitted outputs.
+    """
+
+    def _make_process(self, generate_workchain, generate_structure,
+                      generate_kpoints_mesh, fixture_code, pseudo_family):
+        structure = generate_structure('feo')
+        kpoints = generate_kpoints_mesh(4)
+        pw_code = fixture_code('quantumespresso.pw')
+        constrained_code = fixture_code('lordcapulet.constrained_pw')
+        return generate_workchain(
+            GlobalConstrainedSearchWorkChain,
+            _global_inputs(structure, kpoints, pw_code, constrained_code),
+        )
+
+    def _init_ctx(self, process):
+        process.ctx.N_cumulative = 5
+        process.ctx.converged_matrix_pks = [1, 2, 3]
+        process.ctx.converged_calculation_pks = [10, 11, 12]
+        process.ctx.all_calculation_pks = [10, 11, 12]
+        process.ctx.generation_results = {
+            0: {'type': 'mag_scan', 'n_calculations': 2,
+                'converged_matrix_pks': [1, 2], 'converged_calculation_pks': [10, 11]},
+            1: {'type': 'constrained', 'n_calculations': 3, 'n_successful': 1,
+                'n_failed': 2, 'matrix_pks': [3], 'calculation_pks': [10, 11, 12],
+                'converged_calculation_pks': [12]},
+        }
+
+    def test_all_four_output_keys_emitted(
+        self, generate_workchain, generate_structure, generate_kpoints_mesh,
+        fixture_code, pseudo_family,
+    ):
+        """gather_final_results must emit all four outputs: converged_matrix_pks,
+        converged_calculation_pks, all_calculation_pks, generation_summary."""
+        process = self._make_process(generate_workchain, generate_structure,
+                                     generate_kpoints_mesh, fixture_code, pseudo_family)
+        self._init_ctx(process)
+
+        outputs, capture = _capture_out_factory()
+        with patch.object(process, 'out', side_effect=capture), \
+             patch.object(process, 'report'):
+            process.gather_final_results()
+
+        assert 'converged_matrix_pks' in outputs
+        assert 'converged_calculation_pks' in outputs
+        assert 'all_calculation_pks' in outputs
+        assert 'generation_summary' in outputs
+
+    def test_converged_matrix_pks_correct_values(
+        self, generate_workchain, generate_structure, generate_kpoints_mesh,
+        fixture_code, pseudo_family,
+    ):
+        """converged_matrix_pks output must contain the PKs accumulated in ctx."""
+        process = self._make_process(generate_workchain, generate_structure,
+                                     generate_kpoints_mesh, fixture_code, pseudo_family)
+        self._init_ctx(process)
+
+        outputs, capture = _capture_out_factory()
+        with patch.object(process, 'out', side_effect=capture), \
+             patch.object(process, 'report'):
+            process.gather_final_results()
+
+        assert outputs['converged_matrix_pks'].get_list() == [1, 2, 3]
+
+    def test_converged_calculation_pks_correct_values(
+        self, generate_workchain, generate_structure, generate_kpoints_mesh,
+        fixture_code, pseudo_family,
+    ):
+        """converged_calculation_pks output must contain the accumulated converged PKs."""
+        process = self._make_process(generate_workchain, generate_structure,
+                                     generate_kpoints_mesh, fixture_code, pseudo_family)
+        self._init_ctx(process)
+
+        outputs, capture = _capture_out_factory()
+        with patch.object(process, 'out', side_effect=capture), \
+             patch.object(process, 'report'):
+            process.gather_final_results()
+
+        assert outputs['converged_calculation_pks'].get_list() == [10, 11, 12]
+
+    def test_all_calculation_pks_correct_values(
+        self, generate_workchain, generate_structure, generate_kpoints_mesh,
+        fixture_code, pseudo_family,
+    ):
+        """all_calculation_pks output must contain the full calculation history."""
+        process = self._make_process(generate_workchain, generate_structure,
+                                     generate_kpoints_mesh, fixture_code, pseudo_family)
+        self._init_ctx(process)
+
+        outputs, capture = _capture_out_factory()
+        with patch.object(process, 'out', side_effect=capture), \
+             patch.object(process, 'report'):
+            process.gather_final_results()
+
+        assert outputs['all_calculation_pks'].get_list() == [10, 11, 12]
+
+    def test_generation_summary_contains_all_generations(
+        self, generate_workchain, generate_structure, generate_kpoints_mesh,
+        fixture_code, pseudo_family,
+    ):
+        """generation_summary must include an entry for every generation (0 and 1)."""
+        process = self._make_process(generate_workchain, generate_structure,
+                                     generate_kpoints_mesh, fixture_code, pseudo_family)
+        self._init_ctx(process)
+
+        outputs, capture = _capture_out_factory()
+        with patch.object(process, 'out', side_effect=capture), \
+             patch.object(process, 'report'):
+            process.gather_final_results()
+
+        summary = outputs['generation_summary'].get_dict()
+        assert 'Generation 0' in summary
+        assert 'Generation 1' in summary
+
+    def test_all_output_nodes_are_stored(
+        self, generate_workchain, generate_structure, generate_kpoints_mesh,
+        fixture_code, pseudo_family,
+    ):
+        """Every output node emitted by gather_final_results must be stored (have a pk)."""
+        process = self._make_process(generate_workchain, generate_structure,
+                                     generate_kpoints_mesh, fixture_code, pseudo_family)
+        self._init_ctx(process)
+
+        outputs, capture = _capture_out_factory()
+        with patch.object(process, 'out', side_effect=capture), \
+             patch.object(process, 'report'):
+            process.gather_final_results()
+
+        for key, node in outputs.items():
+            assert node.pk is not None, f"Output '{key}' node was not stored"

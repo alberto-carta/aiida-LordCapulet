@@ -10,7 +10,13 @@ from aiida.engine import calcfunction, Process
 
 from .proposal_modes import propose_random_constraints, propose_random_so_n_constraints
 from .proposal_modes import propose_gaussian_process_constraints
-from lordcapulet.data_structures import OccupationMatrixData, OccupationMatrixAiidaData, extract_occupations_from_calc, filter_atoms_by_species
+from .proposal_modes import propose_template_product_constraints
+from lordcapulet.data_structures import (
+    OccupationMatrixData,
+    clip_occupation_numbers,
+    extract_occupations_from_calc,
+    filter_atoms_by_species,
+)
 
 
 # This calcfunction must be reworked to accept also a list of calculations pks
@@ -25,7 +31,7 @@ def aiida_propose_occ_matrices_from_results(
     debug=False,
     mode='random',*,
     reporter_type='aiida_process',
-    tm_atoms=None, **kwargs):
+    hubbard_corr_atoms=None, **kwargs):
 
     """
     AiiDA calcfunction that takes a list of PKs
@@ -38,7 +44,7 @@ def aiida_propose_occ_matrices_from_results(
     The internal function `propose_new_constraints` should not receive any
     AiiDA specific logic and/or types.
     
-    :param occ_matr_pks: List of PKs to load the occupation matrices from a AFMScanWorkChain or ConstrainedScanWorkChain.
+    :param occ_matr_pks: List of PKs to load the occupation matrices from a StandardMagneticScanWorkChain or ConstrainedScanWorkChain.
     :param N: Int, number of dictionaries to return.
     :param debug: Bool, whether to print debug information.
     :param mode: Mode for selecting the dictionaries, e.g., 'random' or 'read'.
@@ -87,7 +93,7 @@ def aiida_propose_occ_matrices_from_results(
             occ_matrices.append(occupation_matrix_data)
             # print a deprecated warning
             if debug and reporter is not None:
-                reporter(f"Warning: Loaded occupation matrix from Dict node with PK {pk}. This is deprecated, please use OccupationMatrixAiidaData.")
+                reporter(f"Warning: Loaded occupation matrix from Dict node with PK {pk}. This is deprecated, please use JsonableData wrapping OccupationMatrixData.")
         
         # Handle calculation nodes directly (for backward compatibility)
         elif hasattr(node, 'process_type') and ('aiida.calculations:quantumespresso.pw' in node.process_type or 'aiida.calculations:lordcapulet.constrained_pw' in node.process_type):
@@ -101,7 +107,7 @@ def aiida_propose_occ_matrices_from_results(
                 raise ValueError(f"CalcJobNode with PK {pk}, error in parsing occupation_matrix: {e}")
         
         else:
-            raise ValueError(f"Unsupported node type for PK {pk}: {type(node)}. Expected OccupationMatrixAiidaData, Dict, or CalcJobNode.")
+            raise ValueError(f"Unsupported node type for PK {pk}: {type(node)}. Expected JsonableData(OccupationMatrixData), Dict, or CalcJobNode.")
         
 
     # now get the N dictionaries from the list
@@ -141,12 +147,12 @@ def aiida_propose_occ_matrices_from_results(
 
 
 
-    # Filter atoms by species if tm_atoms is provided
-    if tm_atoms is not None:
-        tm_atoms_list = tm_atoms.get_list() if hasattr(tm_atoms, 'get_list') else tm_atoms
+    # Filter atoms by species if hubbard_corr_atoms is provided
+    if hubbard_corr_atoms is not None:
+        hubbard_corr_atoms_list = hubbard_corr_atoms.get_list() if hasattr(hubbard_corr_atoms, 'get_list') else hubbard_corr_atoms
         filtered_matrices = []
         for occ_matrix_data in occ_matrices:
-            filtered_data = filter_atoms_by_species(occ_matrix_data, tm_atoms_list)
+            filtered_data = filter_atoms_by_species(occ_matrix_data, hubbard_corr_atoms_list)
             filtered_matrices.append(filtered_data)
         occ_matrices = filtered_matrices
 
@@ -156,12 +162,13 @@ def aiida_propose_occ_matrices_from_results(
             reporter(f"  Matrix {i+1}: {len(occ_data)} atoms, species: {occ_data.get_atom_species()}")
 
     # Generate proposals using OccupationMatrixData directly (no conversion to legacy format)
-    proposals = propose_new_constraints(
+    proposals, proposal_metadata = propose_new_constraints(
                                     occ_matr_list=occ_matrices,
                                     N=N.value,
                                     debug=debug.value,
                                     mode=mode.value,
                                     reporter=reporter,
+                                    return_metadata=True,
                                     **kwargs_internal
                                     )
 
@@ -171,14 +178,27 @@ def aiida_propose_occ_matrices_from_results(
     for proposal in proposals:
         # Store as JsonableData
         json_node = JsonableData(proposal)
+        for key, value in proposal_metadata.items():
+            json_node.base.extras.set(key, value)
         json_node.store()
         dict_nodes.append(json_node)
 
     # return a list of the PKs of the Dict nodes
-    return List(list=[node.pk for node in dict_nodes])
+    proposal_pk_list = List(list=[node.pk for node in dict_nodes])
+    for key, value in proposal_metadata.items():
+        proposal_pk_list.base.extras.set(key, value)
+    return proposal_pk_list
 
 
-def propose_new_constraints(occ_matr_list, N, mode='random', debug=True, reporter=None, **kwargs):
+def propose_new_constraints(
+    occ_matr_list,
+    N,
+    mode='random',
+    debug=True,
+    reporter=None,
+    return_metadata=False,
+    **kwargs,
+):
     """
     Generate N new occupation matrix proposals from existing data.
     
@@ -213,14 +233,33 @@ def propose_new_constraints(occ_matr_list, N, mode='random', debug=True, reporte
         reporter(f"Atom labels: {first_occ_data.get_atom_labels()}")
         reporter(f"Atom species: {first_occ_data.get_atom_species()}")
 
+    proposal_metadata = {
+        'proposal_mode': mode,
+        'proposal_source': mode,
+        'proposal_generation': kwargs.get('current_generation'),
+    }
+
     # implement case switch for mode
     match mode:
 
         case 'random':
+            proposal_metadata['proposal_source'] = 'random'
             proposals = propose_random_constraints(occ_matr_list, natoms,  N, debug=debug, **kwargs)
 
         case 'random_so_n':
+            proposal_metadata['proposal_source'] = 'random'
             proposals = propose_random_so_n_constraints(occ_matr_list, natoms, N, debug=debug, **kwargs)
+
+        case 'template_product' | 'primitive_template_product':
+            proposal_metadata['proposal_source'] = 'template_product'
+            proposals = propose_template_product_constraints(
+                occ_matr_list,
+                natoms,
+                N,
+                debug=debug,
+                reporter=reporter,
+                **kwargs,
+            )
 
         case 'gaussian_process' | 'gp':
             # Pop energies from kwargs (required for GP mode)
@@ -238,6 +277,7 @@ def propose_new_constraints(occ_matr_list, N, mode='random', debug=True, reporte
 
             # test for the existence of current generation in kwargs
             current_generation = kwargs.pop('current_generation', None)
+            proposal_metadata['proposal_generation'] = current_generation
             
             assert current_generation is not None, "current_generation must be provided in kwargs for GP mode"
 
@@ -248,6 +288,7 @@ def propose_new_constraints(occ_matr_list, N, mode='random', debug=True, reporte
                 N_initial_random = kwargs.get('N_initial_random', N)
 
                 reporter(f"Current generation is {current_generation}, proposing {N_initial_random} random constraints for initial GP training")
+                proposal_metadata['proposal_source'] = 'random_warmup'
                 proposals = propose_random_constraints(occ_matr_list, natoms,  N_initial_random, debug=debug, **kwargs)
             else:
 
@@ -260,17 +301,21 @@ def propose_new_constraints(occ_matr_list, N, mode='random', debug=True, reporte
                         occ_matr_list, energies, natoms, N, gp_config=gp_config,
                         debug=debug, reporter=reporter, **kwargs
                     )
+                    proposal_metadata['proposal_source'] = 'gp'
                 except Exception as e:
                     reporter(f"Error in Gaussian Process proposal generation: {e}")
                     import traceback
                     traceback_str = traceback.format_exc()
                     reporter(traceback_str)
                     reporter("Falling back to random constraint proposals")
+                    proposal_metadata['proposal_source'] = 'random_fallback'
                     proposals = propose_random_constraints(occ_matr_list, natoms,  N, debug=debug, **kwargs)
 
         case 'read':
             # raise implmementation error for now
             raise NotImplementedError("The 'read' mode needs to be implemented")
 
-    
-    return proposals
+    clipped_proposals = [clip_occupation_numbers(proposal) for proposal in proposals]
+    if return_metadata:
+        return clipped_proposals, proposal_metadata
+    return clipped_proposals
