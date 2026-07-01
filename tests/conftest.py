@@ -69,7 +69,7 @@ def _test_priority(item) -> int:
         return 6
     if 'integration_tests/bayesian' in path:
         return 8 if is_slow else 7
-    return 9  # anything unexpected goes last
+    return 10  # anything unexpected goes last
 
 
 def pytest_collection_modifyitems(items):

@@ -545,3 +545,20 @@ class TestGlobalBuilderFromProtocol:
             'proposal_kwargs must be set on the builder when passed in overrides'
         stored = builder.proposal_kwargs.get_dict()
         assert stored['gp_config']['device'] == 'cpu'
+
+    def test_seeded_startup_overrides_propagate(self, fixture_code, generate_structure):
+        """Seeded startup controls must be assignable through protocol overrides."""
+        code = fixture_code('quantumespresso.pw')
+        structure = generate_structure('feo')
+        builder = GlobalConstrainedSearchWorkChain.get_builder_from_protocol(
+            code,
+            structure,
+            ['Fe1'],
+            overrides={
+                'startup_mode': 'seeded',
+                'seed_global_workchain_pk': 12345,
+            },
+        )
+
+        assert builder.startup_mode.value == 'seeded'
+        assert int(builder.seed_global_workchain_pk) == 12345

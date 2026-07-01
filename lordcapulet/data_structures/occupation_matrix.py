@@ -7,6 +7,7 @@ abstracting away the differences between various AiiDA-QE API versions and inter
 """
 
 import json
+from copy import deepcopy
 import numpy as np
 from typing import Dict, List, Any, Union, Optional
 from aiida.orm import JsonableData, load_node
@@ -514,6 +515,27 @@ def filter_atoms_by_species(occupation_data: OccupationMatrixData,
             filtered_data[atom_label] = atom_info
     
     return OccupationMatrixData(filtered_data)
+
+
+def clip_occupation_numbers(
+    occupation_data: OccupationMatrixData,
+    lower: float = -1.0,
+    upper: float = 1.0,
+) -> OccupationMatrixData:
+    """Return a copy with all occupation matrix values clipped to the OSCDFT input range."""
+    clipped_data = deepcopy(occupation_data.data)
+
+    for atom_data in clipped_data.values():
+        occupation_matrix = atom_data.get("occupation_matrix", {})
+        for spin in ("up", "down"):
+            if spin in occupation_matrix:
+                occupation_matrix[spin] = np.clip(
+                    np.asarray(occupation_matrix[spin], dtype=float),
+                    lower,
+                    upper,
+                ).tolist()
+
+    return OccupationMatrixData(clipped_data)
 
 
 def compute_occupation_distance(occ_data1: OccupationMatrixData,

@@ -73,7 +73,7 @@ class ConstrainedScanWorkChain(ProtocolMixin, WorkChain):
             code: AiiDA :class:`~aiida.orm.Code` (or label string) to use.
             structure: :class:`~aiida.orm.StructureData` or
                 :class:`~aiida_quantumespresso.data.hubbard_structure.HubbardStructureData`.
-            hubbard_corr_atoms: list of tagged TM species strings.
+            hubbard_corr_atoms: list of tagged Hubbard-corrected species strings.
             occupation_matrices_list: list of occupation-matrix node PKs to use
                 as constrained targets.
             protocol: protocol name (default: ``'default'``).

@@ -18,7 +18,7 @@ import os
 import aiida
 from aiida.engine import submit
 from lordcapulet.workflows import GlobalConstrainedSearchWorkChain
-from lordcapulet.utils import prepare_tm_info, prepare_hubbard_structure
+from lordcapulet.utils import prepare_hubbard_corr_info, prepare_hubbard_structure
 from ase.io import read
 
 aiida.load_profile()
@@ -39,7 +39,7 @@ if os.path.exists(JSON_FILE):
 else:
     atoms = read('../FeO.scf.in', format='espresso-in')
 
-    hubbard_corr_atoms, hubbard_corr_manifolds, hubbard_corr_dimensions = prepare_tm_info(atoms, table={'Fe'})
+    hubbard_corr_atoms, hubbard_corr_manifolds, hubbard_corr_dimensions = prepare_hubbard_corr_info(atoms, table={'Fe'})
 
     print("Tagged transition atoms:", hubbard_corr_atoms)
     print("Corresponding manifolds:", hubbard_corr_manifolds)
@@ -50,7 +50,7 @@ else:
         atoms, hubbard_corr_atoms, hubbard_corr_manifolds, U_values=5.0
     )
 
-    code = aiida.orm.load_code('pw-7.5-fix@prn')  # Adjust to your code
+    code = aiida.orm.load_code('pw-occ-fix@eiger-uenv-gnu-25.6')  # Adjust to your code
 
     parameters_qe = {
         'SYSTEM': {
@@ -70,8 +70,8 @@ else:
         structure=hubbard_structure,
         hubbard_corr_atoms=hubbard_corr_atoms,
         overrides={
-            'Nmax': 200,
-            'N': 100,
+            'Nmax': 300,
+            'N': 20,
             'proposal_mode': 'gaussian_process',
             # IMPORTANT: GP is refit from scratch every generation. The default
             # is Markovian (only the previous generation feeds the fit). For

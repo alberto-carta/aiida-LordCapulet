@@ -25,6 +25,7 @@ from pathlib import Path
 from datetime import datetime
 from typing import Dict, Any, List, Tuple, Optional
 import numpy as np
+import aiida
 
 from aiida.orm import load_node, CalcJobNode, WorkChainNode, JsonableData
 from aiida.common.exceptions import NotExistent
@@ -44,6 +45,42 @@ except ImportError:
     HAS_ALIVE_BAR = False
 
 
+_VALID_PROPOSAL_MODES = {'random', 'random_so_n', 'gaussian_process', 'gp', 'read'}
+
+
+def _proposal_mode_to_kind(raw: Optional[str]) -> str:
+    """Normalize a raw proposal_mode string to an internal kind label."""
+    if raw in ('gp', 'gaussian_process'):
+        return 'gp'
+    if raw in ('random', 'random_so_n'):
+        return 'random'
+    return 'plain'
+
+
+def _constrained_label(kind: str, generation_number: Optional[int]) -> str:
+    """Label a constrained_scan calc based on proposal kind + generation."""
+    if kind == 'gp':
+        if generation_number == 1:
+            return 'random proposal'
+        return 'GP proposal'
+    if kind == 'random':
+        return 'random proposal'
+    return 'constrained scan'
+
+
+def _proposal_source_label(proposal_source: Optional[str]) -> Optional[str]:
+    """Return a label from explicit proposal metadata, if available."""
+    if proposal_source in ('random', 'random_warmup'):
+        return 'random proposal'
+    if proposal_source == 'random_fallback':
+        return 'random fallback'
+    if proposal_source == 'gp':
+        return 'GP proposal'
+    if proposal_source == 'template_product':
+        return 'template-product proposal'
+    return None
+
+
 class WorkchainDataExtractor:
     """
     Extract and analyze calculations from AiiDA workchains using the new occupation matrix system.
@@ -61,25 +98,40 @@ class WorkchainDataExtractor:
     - JSON export functionality
     """
     
-    def __init__(self, 
+    def __init__(self,
                  perform_so_n: bool = False,
                  sanity_check_reconstruct: bool = False,
                  debug: bool = False,
-                 include_non_converged: bool = False):
+                 include_non_converged: bool = False,
+                 proposal_mode_override: Optional[str] = None):
         """
         Initialize the extractor.
-        
+
         Args:
             perform_so_n: Perform SO(N) decomposition on occupation matrices
             sanity_check_reconstruct: Include reconstruction validation in SO(N) results
             debug: Print detailed debug information
             include_non_converged: Include calculations with exit status 410 (non-converged SCF)
+            proposal_mode_override: Force the proposal_mode used for convergence-rate
+                labeling. If None, the mode is auto-detected from
+                workchain.inputs.proposal_mode (only GlobalConstrainedSearchWorkChain
+                declares this input). Valid values: 'random', 'random_so_n',
+                'gaussian_process', 'gp', 'read'.
         """
+        if proposal_mode_override is not None and proposal_mode_override not in _VALID_PROPOSAL_MODES:
+            raise ValueError(
+                f"proposal_mode_override must be one of {sorted(_VALID_PROPOSAL_MODES)} "
+                f"or None, got {proposal_mode_override!r}"
+            )
+
         self.perform_so_n = perform_so_n
         self.sanity_check_reconstruct = sanity_check_reconstruct
         self.debug = debug
         self.include_non_converged = include_non_converged
-        
+        self.proposal_mode_override = proposal_mode_override
+        self._active_proposal_mode: Optional[str] = None
+        self.convergence_stats: Dict[str, Dict[str, float]] = {}
+
         # Track regularization statistics
         self.regularization_stats = {
             'total_decompositions': 0,
@@ -107,7 +159,13 @@ class WorkchainDataExtractor:
         process_type = getattr(workchain, 'process_type', '').lower()
         print(f"Extracting from workchain PK {workchain_pk}")
         print(f"Workchain type: {getattr(workchain, 'process_type', 'unknown')}")
-        
+
+        # Decide which proposal_mode to use for convergence-rate labeling.
+        # Override beats auto-detect; auto-detect only finds the input on
+        # GlobalConstrainedSearchWorkChain.
+        detected = self._detect_proposal_mode(workchain)
+        self._active_proposal_mode = self.proposal_mode_override or detected
+
         # Extract calculations based on workchain type
         if 'globalconstrained' in process_type or 'global_constrained' in process_type:
             calculations = self._extract_from_global_search(workchain)
@@ -119,6 +177,7 @@ class WorkchainDataExtractor:
                 pass
             self.ctx = SimpleContext()
             self.ctx.generation_map = {calc.pk: None for calc in calculations}
+            self.ctx.proposal_source_map = {}
         elif 'constrainedscan' in process_type or 'constrained_scan' in process_type:
             # Single constrained scan: generation = 0 for all calculations
             calculations = self._extract_from_constrained_scan(workchain)
@@ -127,6 +186,11 @@ class WorkchainDataExtractor:
                 pass
             self.ctx = SimpleContext()
             self.ctx.generation_map = {calc.pk: 0 for calc in calculations}
+            proposal_source = self._get_extra(workchain, 'proposal_source')
+            self.ctx.proposal_source_map = {
+                calc.pk: proposal_source for calc in calculations
+                if proposal_source is not None
+            }
         else:
             raise ValueError(f"Unsupported workchain type: {process_type}")
         
@@ -165,7 +229,10 @@ class WorkchainDataExtractor:
         # Single calculation extraction: determine generation based on source
         source = self._determine_source(calc_node)
         generation_number = None if source == 'afm_workchain' else 0
-        
+
+        # No parent workchain to read; only the override can supply a mode.
+        self._active_proposal_mode = self.proposal_mode_override
+
         calc_data = self._extract_calc_data(calc_node, generation_number)
         
         if self.perform_so_n:
@@ -182,9 +249,10 @@ class WorkchainDataExtractor:
             pass
         self.ctx = SimpleContext()
         self.ctx.generation_map = {}  # Maps calc_pk -> generation_number
+        self.ctx.proposal_source_map = {}
         
         # Try to get generation information from workchain extras or by traversing called workchains
-        generation = 0
+        generation = 1
         for called_wc in workchain.called:
             process_type = getattr(called_wc, 'process_type', '').lower()
             
@@ -197,8 +265,11 @@ class WorkchainDataExtractor:
             elif 'constrainedscan' in process_type or 'constrained_scan' in process_type:
                 # Constrained scans: increment generation for each scan workchain
                 calcs = self._extract_from_constrained_scan(called_wc)
+                proposal_source = self._get_extra(called_wc, 'proposal_source')
                 for calc in calcs:
                     self.ctx.generation_map[calc.pk] = generation
+                    if proposal_source is not None:
+                        self.ctx.proposal_source_map[calc.pk] = proposal_source
                 calculations.extend(calcs)
                 generation += 1
         
@@ -276,6 +347,11 @@ class WorkchainDataExtractor:
         
         if generation_map is None:
             generation_map = {}
+        proposal_source_map = (
+            self.ctx.proposal_source_map
+            if hasattr(self, 'ctx') and hasattr(self.ctx, 'proposal_source_map')
+            else {}
+        )
         
         results = []
         
@@ -284,7 +360,10 @@ class WorkchainDataExtractor:
                 for calc in calculations:
                     try:
                         generation_number = generation_map.get(calc.pk, 0)
-                        calc_data = self._extract_calc_data(calc, generation_number)
+                        proposal_source = proposal_source_map.get(calc.pk)
+                        calc_data = self._extract_calc_data(
+                            calc, generation_number, proposal_source
+                        )
                         if calc_data:
                             results.append(calc_data)
                     except Exception as e:
@@ -296,7 +375,10 @@ class WorkchainDataExtractor:
             for i, calc in enumerate(calculations):
                 try:
                     generation_number = generation_map.get(calc.pk, 0)
-                    calc_data = self._extract_calc_data(calc, generation_number)
+                    proposal_source = proposal_source_map.get(calc.pk)
+                    calc_data = self._extract_calc_data(
+                        calc, generation_number, proposal_source
+                    )
                     if calc_data:
                         results.append(calc_data)
                 except Exception as e:
@@ -309,10 +391,20 @@ class WorkchainDataExtractor:
         
         if self.perform_so_n:
             self._print_regularization_summary()
-        
+
+        self.convergence_stats = self._convergence_rates_by_source(
+            results, self._active_proposal_mode
+        )
+        self._print_convergence_summary()
+
         return results
-    
-    def _extract_calc_data(self, calc: CalcJobNode, generation_number: int = None) -> Dict[str, Any]:
+
+    def _extract_calc_data(
+        self,
+        calc: CalcJobNode,
+        generation_number: int = None,
+        proposal_source: Optional[str] = None,
+    ) -> Dict[str, Any]:
         """Extract data from a single calculation.
         
         Args:
@@ -323,6 +415,7 @@ class WorkchainDataExtractor:
             'pk': calc.pk,
             'exit_status': calc.exit_status,
             'generation_number': generation_number,
+            'proposal_source': proposal_source,
             'converged': calc.exit_status == 0,
             'process_type': getattr(calc, 'process_type', 'unknown'),
             'calculation_source': self._determine_source(calc),
@@ -390,14 +483,85 @@ class WorkchainDataExtractor:
     def _determine_source(self, calc: CalcJobNode) -> str:
         """Determine the source of a calculation."""
         process_type = getattr(calc, 'process_type', '').lower()
-        
+
         if 'lordcapulet.constrained_pw' in process_type or 'constrainedpw' in process_type:
             return 'constrained_scan'
         elif 'quantumespresso.pw' in process_type:
             return 'afm_workchain'
         else:
             return 'unknown'
-    
+
+    def _detect_proposal_mode(self, workchain: WorkChainNode) -> Optional[str]:
+        """Read proposal_mode from a workchain's inputs, if declared.
+
+        Only GlobalConstrainedSearchWorkChain declares this input
+        (lordcapulet/workflows/global_constrained_search.py). Returns None
+        for AFMScanWorkChain / standalone ConstrainedScanWorkChain.
+        """
+        try:
+            return workchain.inputs.proposal_mode.value
+        except (AttributeError, KeyError, NotExistent):
+            return None
+
+    @staticmethod
+    def _get_extra(node, key: str):
+        """Read an AiiDA extra, returning None when it is absent."""
+        try:
+            if key in node.base.extras:
+                return node.base.extras.get(key)
+        except AttributeError:
+            return None
+        return None
+
+    def _convergence_rates_by_source(
+        self,
+        calc_data_list: List[Dict[str, Any]],
+        proposal_mode: Optional[str],
+    ) -> Dict[str, Dict[str, float]]:
+        """Group calc records by proposal-source label, count converge rate.
+
+        Returns:
+            { label: {'converged': int, 'total': int, 'rate': float} }
+            rate in [0, 1]; 0.0 when total == 0.
+
+        proposal_mode is the raw mode string (or None). It is normalized
+        via _proposal_mode_to_kind before driving the constrained-calc
+        labeling rule in _constrained_label.
+
+        Meaningful only when include_non_converged=True; otherwise
+        non-converged calcs are dropped upstream and every rate is 1.0.
+        """
+        kind = _proposal_mode_to_kind(proposal_mode)
+        stats: Dict[str, Dict[str, float]] = {}
+        for calc in calc_data_list:
+            source = calc.get('calculation_source', 'unknown')
+            if source == 'afm_workchain':
+                label = 'standard magnetic scan'
+            elif source == 'constrained_scan':
+                label = (
+                    _proposal_source_label(calc.get('proposal_source'))
+                    or _constrained_label(kind, calc.get('generation_number'))
+                )
+            else:
+                label = source
+            bucket = stats.setdefault(label, {'converged': 0, 'total': 0, 'rate': 0.0})
+            bucket['total'] += 1
+            if calc.get('converged'):
+                bucket['converged'] += 1
+        for bucket in stats.values():
+            total = bucket['total']
+            bucket['rate'] = (bucket['converged'] / total) if total else 0.0
+        return stats
+
+    def _print_convergence_summary(self) -> None:
+        """Print per-source convergence rates (mirrors regularization summary)."""
+        if not self.convergence_stats:
+            return
+        print("\nConvergence Rate by Source:")
+        for label, s in self.convergence_stats.items():
+            pct = s['rate'] * 100.0
+            print(f"  {label:<26} {int(s['converged']):>5} / {int(s['total']):<5}  {pct:6.2f}%")
+
     def _perform_so_n_decomposition(self, occ_data: OccupationMatrixData, calc_pk: int) -> Dict[str, Any]:
         """Perform SO(N) decomposition on occupation matrices."""
         results = {
@@ -509,7 +673,9 @@ class WorkchainDataExtractor:
             'total_calculations': total_calcs,
             'converged_calculations': converged_calcs,
             'non_converged_calculations': non_converged,
-            'calculation_sources': source_counts
+            'calculation_sources': source_counts,
+            'proposal_mode': self._active_proposal_mode,
+            'convergence_rates_by_source': self.convergence_stats,
         }
         
         metadata = {
@@ -517,6 +683,10 @@ class WorkchainDataExtractor:
             'extraction_timestamp': datetime.now().isoformat(),
             **workchain_info
         }
+        try:
+            metadata['profile'] = aiida.get_profile().name
+        except Exception:
+            pass
         
         output_data = {
             'metadata': metadata,
@@ -561,10 +731,11 @@ def gather_workchain_data(workchain_pk: int,
                          perform_so_n: bool = False,
                          sanity_check_reconstruct: bool = False,
                          debug: bool = False,
-                         include_non_converged: bool = False) -> Dict[str, Any]:
+                         include_non_converged: bool = False,
+                         proposal_mode_override: Optional[str] = None) -> Dict[str, Any]:
     """
     Extract data from a workchain.
-    
+
     Args:
         workchain_pk: Primary key of the workchain
         output_filename: Optional JSON output filename
@@ -572,7 +743,9 @@ def gather_workchain_data(workchain_pk: int,
         sanity_check_reconstruct: Include reconstruction validation
         debug: Print detailed debug information
         include_non_converged: Include non-converged calculations (exit 410)
-        
+        proposal_mode_override: Force proposal_mode for convergence-rate labeling;
+            auto-detected from workchain inputs if None.
+
     Returns:
         Complete data dictionary
     """
@@ -580,7 +753,8 @@ def gather_workchain_data(workchain_pk: int,
         perform_so_n=perform_so_n,
         sanity_check_reconstruct=sanity_check_reconstruct,
         debug=debug,
-        include_non_converged=include_non_converged
+        include_non_converged=include_non_converged,
+        proposal_mode_override=proposal_mode_override,
     )
     
     data = extractor.extract_from_workchain(workchain_pk)
@@ -597,5 +771,3 @@ def gather_workchain_data(workchain_pk: int,
     print(f"Sources: {data['statistics']['calculation_sources']}")
     
     return data
-
-

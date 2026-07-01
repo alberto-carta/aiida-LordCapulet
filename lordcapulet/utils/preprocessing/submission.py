@@ -236,8 +236,8 @@ def prepare_hubbard_structure(
 
     Args:
         atoms: ASE :class:`~ase.Atoms` object (e.g. from ``ase.io.read``).
-        hubbard_corr_atoms: list of tagged TM species strings as returned by
-            :func:`prepare_tm_info`, e.g. ``['Fe1', 'Fe2']``.
+        hubbard_corr_atoms: list of tagged Hubbard-corrected species strings as returned by
+            :func:`prepare_hubbard_corr_info`, e.g. ``['Fe1', 'Fe2']``.
         hubbard_corr_manifolds: list of manifold strings matching *hubbard_corr_atoms*,
             e.g. ``['3d', '3d']``.
         U_values: Hubbard U value(s) in eV. Either:
