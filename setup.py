@@ -9,7 +9,8 @@ setup(
             'lordcapulet.constrained_pw = lordcapulet.calculations.constrained_pw:ConstrainedPWCalculation',
         ],
         'aiida.workflows': [
-            'lordcapulet.afm_scan = lordcapulet.workflows.afm_scan:AFMScanWorkChain',
+            'lordcapulet.standard_magnetic_scan = lordcapulet.workflows.standard_magnetic_scan:StandardMagneticScanWorkChain',
+            'lordcapulet.afm_scan = lordcapulet.workflows.standard_magnetic_scan:StandardMagneticScanWorkChain',
             'lordcapulet.constrained_scan = lordcapulet.workflows.constrained_scan:ConstrainedScanWorkChain',
         ],
     },

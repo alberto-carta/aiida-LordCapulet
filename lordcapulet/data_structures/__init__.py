@@ -7,7 +7,6 @@ and collections of calculation data.
 
 from .occupation_matrix import (
     OccupationMatrixData,
-    OccupationMatrixAiidaData,
     extract_occupations_from_calc,
     filter_atoms_by_species
 )
@@ -16,7 +15,6 @@ from .databank import DataBank
 
 __all__ = [
     'OccupationMatrixData',
-    'OccupationMatrixAiidaData',
     'extract_occupations_from_calc',
     'filter_atoms_by_species',
     'DataBank',

@@ -1,60 +1,48 @@
 from aiida.engine import WorkChain, ToContext, submit, append_
 from aiida.orm import load_group, List, Dict, Code, KpointsData, StructureData, Float, Str, load_node, JsonableData
 from aiida.plugins import CalculationFactory
+# import UpfData
+from aiida.orm import UpfData
 import numpy as np
 from aiida_quantumespresso.data.hubbard_structure import HubbardStructureData
 from lordcapulet.utils import extract_occupations_from_calc
 from lordcapulet.workflows.protocols.utils import ProtocolMixin
+# load group
 
-# Import the custom constrained calculation
-from lordcapulet.calculations.constrained_pw import ConstrainedPWCalculation
+PwCalculation = CalculationFactory('quantumespresso.pw')
 
-class ConstrainedScanWorkChain(ProtocolMixin, WorkChain):
-    """
-    WorkChain that launches N ConstrainedPWCalculation with different target occupation matrices.
-    
-    This workchain takes a list of occupation matrices and runs a constrained DFT+U calculation
-    for each one, gathering the results at the end.
-    """
-    
+class StandardMagneticScanWorkChain(ProtocolMixin, WorkChain):
     @classmethod
     def define(cls, spec):
         super().define(spec)
-        
-        # Standard inputs for PW calculations
+        # Accept both StructureData and HubbardStructureData
         spec.input('structure', valid_type=(StructureData, HubbardStructureData))
         spec.input('parameters', valid_type=Dict)
         spec.input('kpoints', valid_type=KpointsData)
+        # spec.input('pseudos', valid_type=Dict)
         spec.input('code', valid_type=Code)
         spec.input('hubbard_corr_atoms', valid_type=List)
-        
-        # OSCDFT specific inputs
-        spec.input('oscdft_card', valid_type=Dict, help='OSCDFT parameters')
-        spec.input('occupation_matrices_list', valid_type=List, 
-                  help='List of target occupation matrices [iproposal][iatom][ispin][iorb][iorb]')
+        spec.input('magnitude', valid_type=Float, default=Float(0.5))
         spec.input('walltime_hours', valid_type=Float, default=lambda: Float(1.0),
-                  help='Walltime in hours for each constrained calculation (default: 1 hour)')
+                  help='Walltime in hours for each magnetic configuration calculation (default: 1 hour)')
         spec.input('pseudo_family_string', valid_type=Str,
                   default=lambda: Str('SSSP/1.3/PBEsol/efficiency'),
                   help='Pseudo-potential family to use (must be installed via aiida-pseudo)')
-        
         spec.outline(
-            cls.prepare_calculations,
+            cls.prepare_configs,
             cls.run_all,
             cls.gather_results,
         )
-        
-        # Outputs
         spec.output('converged_matrix_pks', valid_type=List)
         spec.output('converged_calculation_pks', valid_type=List)
         spec.output('all_calculation_pks', valid_type=List)
 
     @classmethod
     def get_protocol_filepath(cls):
-        """Return the path to the constrained scan protocol YAML file."""
+        """Return the path to the standard magnetic scan protocol YAML file."""
         from importlib_resources import files
         import lordcapulet.workflows.protocols as protocols_pkg
-        return files(protocols_pkg) / 'constrained_scan.yaml'
+        return files(protocols_pkg) / 'standard_magnetic_scan.yaml'
 
     @classmethod
     def get_builder_from_protocol(
@@ -62,7 +50,6 @@ class ConstrainedScanWorkChain(ProtocolMixin, WorkChain):
         code,
         structure,
         hubbard_corr_atoms,
-        occupation_matrices_list,
         protocol: str = 'default',
         overrides: dict | None = None,
         options: dict | None = None,
@@ -73,11 +60,12 @@ class ConstrainedScanWorkChain(ProtocolMixin, WorkChain):
             code: AiiDA :class:`~aiida.orm.Code` (or label string) to use.
             structure: :class:`~aiida.orm.StructureData` or
                 :class:`~aiida_quantumespresso.data.hubbard_structure.HubbardStructureData`.
-            hubbard_corr_atoms: list of tagged TM species strings.
-            occupation_matrices_list: list of occupation-matrix node PKs to use
-                as constrained targets.
+            hubbard_corr_atoms: list of tagged Hubbard-correlated species strings as
+                returned by
+                :func:`~lordcapulet.utils.preprocessing.submission.tag_and_list_atoms`.
             protocol: protocol name (default: ``'default'``).
-            overrides: optional dict of inputs to override protocol defaults.
+            overrides: optional dict of inputs to override protocol defaults;
+                deep-merged with highest priority.
             options: optional dict merged into ``metadata_options``.
 
         Returns:
@@ -85,10 +73,6 @@ class ConstrainedScanWorkChain(ProtocolMixin, WorkChain):
         """
         from aiida.orm import load_code
         from lordcapulet.workflows.protocols.utils import recursive_merge, make_kpoints
-        from lordcapulet.utils.preprocessing.submission import (
-            get_default_manifolds,
-            get_dimensions,
-        )
 
         if isinstance(code, str):
             code = load_code(code)
@@ -100,13 +84,6 @@ class ConstrainedScanWorkChain(ProtocolMixin, WorkChain):
                 inputs.get('metadata_options', {}), options
             )
 
-        # Compute n_oscdft from the Hubbard-corrected atoms (dim*dim*2 per atom, matching get_dimensions)
-        manifolds = get_default_manifolds(hubbard_corr_atoms)
-        n_oscdft = sum(get_dimensions(manifolds))
-
-        oscdft_dict = dict(inputs.get('oscdft_card', {}))
-        oscdft_dict['n_oscdft'] = n_oscdft
-
         kpoints = make_kpoints(inputs, structure)
 
         builder = cls.get_builder()
@@ -115,63 +92,40 @@ class ConstrainedScanWorkChain(ProtocolMixin, WorkChain):
         builder.kpoints = kpoints
         builder.parameters = Dict(dict=inputs['parameters'])
         builder.hubbard_corr_atoms = List(list=hubbard_corr_atoms)
-        builder.occupation_matrices_list = List(list=occupation_matrices_list)
-        builder.oscdft_card = Dict(dict=oscdft_dict)
+        builder.magnitude = Float(inputs.get('magnitude', 0.5))
         builder.walltime_hours = Float(inputs.get('walltime_hours', 2.0))
         builder.pseudo_family_string = Str(
             inputs.get('pseudo_family', 'SSSP/1.3/PBEsol/efficiency')
         )
         return builder
 
-    def prepare_calculations(self):
-        """
-        Prepare the list of calculations with different target occupation matrices.
-        """
-        # Get the list of occupation matrices
-        occupation_matrices_list = self.inputs.occupation_matrices_list.get_list()
-        
-        self.ctx.n_calculations = len(occupation_matrices_list)
-        self.ctx.target_matrices = occupation_matrices_list
-        
-        self.report(f"Preparing {self.ctx.n_calculations} constrained calculations")
+    def prepare_configs(self):
+        hubbard_corr_atoms = self.inputs.hubbard_corr_atoms.get_list()
+        N = len(hubbard_corr_atoms)
+        self.ctx.magnetic_configs = []
+        for i in range(2 ** N):
+            config = {}
+            binary_string = format(i, f'0{N}b')
+            for j in range(N):
+                config[hubbard_corr_atoms[j]] = self.inputs.magnitude * (1 if binary_string[j] == '1' else -1)
+            self.ctx.magnetic_configs.append(config)
+        self.ctx.results = []
 
     def run_all(self):
-        """
-        Submit all the constrained calculations with different target occupation matrices.
-        """
         self.ctx.calc_futures = []
-        
-        for i, target_matrix_pk in enumerate(self.ctx.target_matrices):
-            self.report(f"Submitting calculation {i+1}/{self.ctx.n_calculations}")
-            
-            # Load the target matrix node from PK
-            target_matrix_node = load_node(target_matrix_pk)
-            
-            # Build the calculation
-            builder = ConstrainedPWCalculation.get_builder()
+        for starting_magnetization in self.ctx.magnetic_configs:
+            builder = PwCalculation.get_builder()
             builder.code = self.inputs.code
             builder.structure = self.inputs.structure
             builder.parameters = self.inputs.parameters.clone()
             builder.kpoints = self.inputs.kpoints
+
             pseudo_family = load_group(self.inputs.pseudo_family_string.value)
             builder.pseudos = pseudo_family.get_pseudos(structure=builder.structure)
-            
-            # Set magnetization for all transition metal atoms to a small value
-            hubbard_corr_atoms = self.inputs.hubbard_corr_atoms.get_list()
-            magnetization_config = {}
-            for hubbard_corr_atom in hubbard_corr_atoms:
-                magnetization_config[hubbard_corr_atom] = 1e-9
-            
-            # Add the magnetization to the parameters
-            builder.parameters['SYSTEM']['starting_magnetization'] = magnetization_config
 
-            # Set OSCDFT specific inputs
-            builder.oscdft_card = self.inputs.oscdft_card
-
-            # Pass the loaded target matrix node (JsonableData or Dict)
-            builder.target_matrix = target_matrix_node
+            builder.parameters['SYSTEM']['starting_magnetization'] = starting_magnetization
             
-            # Set computational options with configurable walltime
+            # Set metadata for calculations with configurable walltime
             walltime_hours = self.inputs.walltime_hours.value
             walltime_str = f"{int(walltime_hours):02d}:{int((walltime_hours % 1) * 60):02d}:00"
             builder.metadata = {
@@ -181,15 +135,10 @@ class ConstrainedScanWorkChain(ProtocolMixin, WorkChain):
                     'max_wallclock_seconds': int(walltime_hours * 3600)
                 }
             }
-
             
-            # Enable parsing of occupation matrices and add oscdft flag
-            builder.settings = Dict(dict={
-                'parser_options': {'parse_atomic_occupations': True},
-                'CMDLINE': ['-oscdft'],
-            })
-            
-            # Submit and store in context
+            # <<< CORRECT KEY FOR OCCUPATION MATRICES >>>
+            builder.settings = Dict(dict={'parser_options': {'parse_atomic_occupations': True}})
+            # self.ctx.calc_futures.append(self.submit(builder))
             self.to_context(calcs=append_(self.submit(builder)))
 
     def gather_results(self):
@@ -228,6 +177,7 @@ class ConstrainedScanWorkChain(ProtocolMixin, WorkChain):
                     
                     # Add occupation matrix pk to the extras of each calculation
                     fresh_calc.base.extras.set('occupation_matrix_pk', occ_node.pk)
+
                     
                     self.report(f"Occupation matrix extracted and stored with PK: {occ_node.pk}")
                 except Exception as e:
@@ -243,4 +193,4 @@ class ConstrainedScanWorkChain(ProtocolMixin, WorkChain):
         self.out('converged_matrix_pks', List(list=occupation_matrices_pks).store())
         
         successful_extractions = len([pk for pk in occupation_matrices_pks if pk != -1])
-        self.report(f"Constrained scan completed. {len(converged_calculation_pks)}/{len(calculation_pks)} calculations converged, {successful_extractions}/{len(calculation_pks)} occupation matrices extracted")
+        self.report(f"Magnetic scan completed. {len(converged_calculation_pks)}/{len(calculation_pks)} calculations converged, {successful_extractions}/{len(calculation_pks)} occupation matrices extracted")

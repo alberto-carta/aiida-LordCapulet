@@ -4,7 +4,7 @@ from aiida.plugins import CalculationFactory
 from aiida_quantumespresso.data.hubbard_structure import HubbardStructureData
 
 # Import the custom workchains
-from lordcapulet.workflows.afm_scan import AFMScanWorkChain
+from lordcapulet.workflows.standard_magnetic_scan import StandardMagneticScanWorkChain
 from lordcapulet.workflows.constrained_scan import ConstrainedScanWorkChain
 from lordcapulet.functions import aiida_propose_occ_matrices_from_results
 
@@ -27,8 +27,8 @@ class GlobalConstrainedSearchWorkChain(WorkChain):
     def define(cls, spec):
         super().define(spec)
         
-        # Expose inputs from AFMScanWorkChain
-        spec.expose_inputs(AFMScanWorkChain, namespace='afm')
+        # Expose inputs from StandardMagneticScanWorkChain
+        spec.expose_inputs(StandardMagneticScanWorkChain, namespace='mag_scan')
         
         # Expose inputs from ConstrainedScanWorkChain (will be reused)
         spec.expose_inputs(ConstrainedScanWorkChain, namespace='constrained',
@@ -51,14 +51,14 @@ class GlobalConstrainedSearchWorkChain(WorkChain):
                   help='Additional keyword arguments for proposal function')
         
         # Walltime control parameters (optional - will override sub-workchain defaults)
-        spec.input('afm_walltime_hours', valid_type=Float, required=False,
+        spec.input('mag_scan_walltime_hours', valid_type=Float, required=False,
                   help='Walltime in hours for AFM calculations (overrides afm.walltime_hours if provided)')
         spec.input('constrained_walltime_hours', valid_type=Float, required=False,
                   help='Walltime in hours for constrained calculations (overrides constrained.walltime_hours if provided)')
         
         spec.outline(
-            cls.run_initial_afm_search,
-            cls.process_afm_results,
+            cls.run_initial_mag_scan,
+            cls.process_mag_scan_results,
             while_(cls.should_continue_search)(
                 cls.run_constrained_batch,
                 cls.process_constrained_results,
@@ -68,11 +68,11 @@ class GlobalConstrainedSearchWorkChain(WorkChain):
         )
         
         # Outputs
-        # spec.output('converged_afm_matrix_pks', valid_type=List,
+        # spec.output('converged_mag_scan_matrix_pks', valid_type=List,
         #            help='Occupation matrices from initial AFM search')
         # spec.output('converged_constrained_matrix_pks', valid_type=List,
         #            help='All occupation matrices from constrained calculations')
-        # spec.output('converged_afm_calculation_pks', valid_type=List,
+        # spec.output('converged_mag_scan_calculation_pks', valid_type=List,
         #            help='PKs of all converged AFM calculations')
         # spec.output('converged_constrained_calculation_pks', valid_type=List,
         #            help='PKs of all converged constrained calculations')
@@ -86,84 +86,214 @@ class GlobalConstrainedSearchWorkChain(WorkChain):
                    help='Summary of results per generation')
         
         # Exit codes
-        spec.exit_code(400, 'ERROR_AFM_SEARCH_FAILED',
-                      message='Initial AFM search failed')
+        spec.exit_code(400, 'ERROR_MAG_SCAN_FAILED',
+                      message='Initial magnetic scan failed')
         spec.exit_code(401, 'ERROR_CONSTRAINED_SCAN_FAILED',
                       message='Constrained scan failed')
         spec.exit_code(402, 'ERROR_PROPOSAL_FAILED',
                       message='Matrix proposal step failed')
 
-    def run_initial_afm_search(self):
+    @classmethod
+    def get_builder_from_protocol(
+        cls,
+        code,
+        structure,
+        hubbard_corr_atoms,
+        protocol: str = 'default',
+        overrides: dict | None = None,
+    ):
+        """Return a pre-populated builder for the global constrained search.
+
+        Protocol defaults are loaded from all three YAML files:
+        ``common.yaml`` + ``standard_magnetic_scan.yaml`` for the magnetic scan sub-workchain,
+        ``common.yaml`` + ``constrained_scan.yaml`` for the constrained scan,
+        and ``global_search.yaml`` for global parameters.
+
+        Args:
+            code: AiiDA :class:`~aiida.orm.Code` (or label string).  Pass a
+                dict ``{'mag_scan': code1, 'constrained': code2}`` to use
+                different codes for each sub-workchain.
+            structure: input structure.
+            hubbard_corr_atoms: list of tagged hubbard species strings returned by
+                :func:`~lordcapulet.utils.preprocessing.submission.tag_and_list_atoms`.
+            protocol: protocol name (default: ``'default'``).
+            overrides: optional dict.  Keys ``'mag_scan'`` and ``'constrained'``
+                route overrides to the respective sub-protocol; all other
+                keys (``'Nmax'``, ``'N'``, ``'proposal_mode'``, …) override
+                the global search parameters.
+
+        Returns:
+            A populated :class:`~aiida.engine.ProcessBuilder`.
+        """
+        import yaml
+        from importlib_resources import files
+        import lordcapulet.workflows.protocols as protocols_pkg
+        from aiida.orm import load_code, KpointsData, Dict, List, Float, Str, Int, Bool
+        from lordcapulet.utils.preprocessing.submission import (
+            get_default_manifolds,
+            get_dimensions,
+        )
+        from lordcapulet.workflows.protocols.utils import recursive_merge
+
+        overrides = overrides or {}
+
+        # ── resolve code(s) ─────────────────────────────────────────────────
+        if isinstance(code, dict):
+            afm_code = load_code(code['mag_scan']) if isinstance(code['mag_scan'], str) else code['mag_scan']
+            con_code = load_code(code['constrained']) if isinstance(code['constrained'], str) else code['constrained']
+        else:
+            if isinstance(code, str):
+                code = load_code(code)
+            afm_code = con_code = code
+
+        # ── load sub-protocol inputs ─────────────────────────────────────────
+        afm_inputs = StandardMagneticScanWorkChain.get_protocol_inputs(
+            protocol, overrides.get('mag_scan')
+        )
+        con_inputs = ConstrainedScanWorkChain.get_protocol_inputs(
+            protocol, overrides.get('constrained')
+        )
+
+        # ── load global_search.yaml defaults ────────────────────────────────
+        global_path = files(protocols_pkg) / 'global_search.yaml'
+        with global_path.open() as fh:
+            global_data = yaml.safe_load(fh) or {}
+
+        proto_data = (global_data.get('protocols', {}).get(protocol) or {})
+        global_inputs = {k: v for k, v in global_data.items()
+                         if k not in {'protocols', 'default_protocol'}}
+        global_inputs = recursive_merge(
+            global_inputs,
+            {k: v for k, v in proto_data.items() if k != 'description'},
+        )
+        # User top-level overrides (not 'mag_scan' / 'constrained' keys)
+        user_global = {k: v for k, v in overrides.items()
+                       if k not in ('mag_scan', 'constrained')}
+        global_inputs = recursive_merge(global_inputs, user_global)
+
+        # ── compute n_oscdft from hubbard_corr_atoms ───────────────────────────────────
+        manifolds = get_default_manifolds(hubbard_corr_atoms)
+        n_oscdft = sum(get_dimensions(manifolds))
+
+        oscdft_dict = dict(con_inputs.get('oscdft_card', {}))
+        oscdft_dict['n_oscdft'] = n_oscdft
+
+        # ── build kpoints ────────────────────────────────────────────────────
+        # make_kpoints uses density-based auto-mesh by default, or a fixed mesh
+        # if the caller passed overrides={'mag_scan': {'kpoints_mesh': [...]}}.
+        from lordcapulet.workflows.protocols.utils import make_kpoints
+        afm_kpoints = make_kpoints(afm_inputs, structure)
+        con_kpoints = make_kpoints(con_inputs, structure)
+
+        # ── populate builder ─────────────────────────────────────────────────
+        builder = cls.get_builder()
+
+        # AFM sub-workchain
+        builder.mag_scan.code = afm_code
+        builder.mag_scan.structure = structure
+        builder.mag_scan.kpoints = afm_kpoints
+        builder.mag_scan.parameters = Dict(dict=afm_inputs['parameters'])
+        builder.mag_scan.hubbard_corr_atoms = List(list=hubbard_corr_atoms)
+        builder.mag_scan.magnitude = Float(afm_inputs.get('magnitude', 0.5))
+        builder.mag_scan.walltime_hours = Float(afm_inputs.get('walltime_hours', 2.0))
+        builder.mag_scan.pseudo_family_string = Str(
+            afm_inputs.get('pseudo_family', 'SSSP/1.3/PBEsol/efficiency')
+        )
+
+        # Constrained sub-workchain (occupation_matrices_list excluded via expose_inputs)
+        builder.constrained.code = con_code
+        builder.constrained.structure = structure
+        builder.constrained.kpoints = con_kpoints
+        builder.constrained.parameters = Dict(dict=con_inputs['parameters'])
+        builder.constrained.hubbard_corr_atoms = List(list=hubbard_corr_atoms)
+        builder.constrained.oscdft_card = Dict(dict=oscdft_dict)
+        builder.constrained.walltime_hours = Float(con_inputs.get('walltime_hours', 2.0))
+        builder.constrained.pseudo_family_string = Str(
+            con_inputs.get('pseudo_family', 'SSSP/1.3/PBEsol/efficiency')
+        )
+
+        # Global search parameters
+        builder.Nmax = Int(global_inputs.get('Nmax', 20))
+        builder.N = Int(global_inputs.get('N', 4))
+        builder.proposal_mode = Str(global_inputs.get('proposal_mode', 'random_so_n'))
+        builder.proposal_debug = Bool(global_inputs.get('proposal_debug', False))
+        builder.proposal_holistic = Bool(global_inputs.get('proposal_holistic', False))
+        if 'proposal_kwargs' in global_inputs:
+            builder.proposal_kwargs = Dict(dict=global_inputs['proposal_kwargs'])
+
+        return builder
+
+    def run_initial_mag_scan(self):
         """
         Run the initial AFM search to get starting occupation matrices.
         """
-        self.report("Starting initial AFM search")
+        self.report("Starting initial magnetic scan")
         
         # Submit AFM scan with exposed inputs
-        afm_builder = AFMScanWorkChain.get_builder()
-        afm_builder.update(self.inputs.afm)
+        mag_scan_builder = StandardMagneticScanWorkChain.get_builder()
+        mag_scan_builder.update(self.inputs.mag_scan)
         
         # Override walltime if provided at global level
-        if 'afm_walltime_hours' in self.inputs:
-            afm_builder.walltime_hours = self.inputs.afm_walltime_hours
-            self.report(f"Using global AFM walltime: {self.inputs.afm_walltime_hours.value} hours")
+        if 'mag_scan_walltime_hours' in self.inputs:
+            mag_scan_builder.walltime_hours = self.inputs.mag_scan_walltime_hours
+            self.report(f"Using global mag_scan walltime: {self.inputs.mag_scan_walltime_hours.value} hours")
         
-        future = self.submit(afm_builder)
-        return ToContext(afm_wc=future)
+        future = self.submit(mag_scan_builder)
+        return ToContext(mag_scan_wc=future)
 
-    def process_afm_results(self):
+    def process_mag_scan_results(self):
         """
         Process AFM results and propose initial matrices for constrained calculations.
         """
-        if not self.ctx.afm_wc.is_finished_ok:
-            self.report(f"AFM workchain failed with exit status: {self.ctx.afm_wc.exit_status}")
-            return self.exit_codes.ERROR_AFM_SEARCH_FAILED
+        if not self.ctx.mag_scan_wc.is_finished_ok:
+            self.report(f"Magnetic scan workchain failed with exit status: {self.ctx.mag_scan_wc.exit_status}")
+            return self.exit_codes.ERROR_MAG_SCAN_FAILED
             
         # Check if we have any occupation matrices at all
-        if 'converged_matrix_pks' not in self.ctx.afm_wc.outputs:
-            self.report("AFM workchain completed but no converged occupation matrices found")
-            return self.exit_codes.ERROR_AFM_SEARCH_FAILED
+        if 'converged_matrix_pks' not in self.ctx.mag_scan_wc.outputs:
+            self.report("Magnetic scan workchain completed but no converged occupation matrices found")
+            return self.exit_codes.ERROR_MAG_SCAN_FAILED
             
-        self.report("AFM search completed successfully, processing results")
+        self.report("Magnetic scan completed successfully, processing results")
         
         # Get AFM occupation matrices
-        afm_matrices = self.ctx.afm_wc.outputs.converged_matrix_pks
-        afm_calculation_pks = self.ctx.afm_wc.outputs.converged_calculation_pks
-        self.ctx.converged_afm_matrices = afm_matrices
+        mag_scan_matrices = self.ctx.mag_scan_wc.outputs.converged_matrix_pks
+        mag_scan_calculation_pks = self.ctx.mag_scan_wc.outputs.converged_calculation_pks
+        self.ctx.converged_mag_scan_matrices = mag_scan_matrices
 
 
-        self.ctx.converged_calculation_pks = afm_calculation_pks.get_list().copy()
+        self.ctx.converged_calculation_pks = mag_scan_calculation_pks.get_list().copy()
         
         # Check if we have any successful AFM results
-        if len(afm_matrices.get_list()) == 0:
-            self.report("No successful AFM calculations found")
-            return self.exit_codes.ERROR_AFM_SEARCH_FAILED
+        if len(mag_scan_matrices.get_list()) == 0:
+            self.report("No successful magnetic scan calculations found")
+            return self.exit_codes.ERROR_MAG_SCAN_FAILED
         
-        self.report(f"Found {len(afm_matrices.get_list())} successful AFM occupation matrices")
+        self.report(f"Found {len(mag_scan_matrices.get_list())} successful magnetic scan occupation matrices")
         
         # Initialize counters and storage
         self.ctx.N_cumulative = 0
         self.ctx.generation = 0
-        # self.ctx.all_matrix_pks = afm_matrices.get_list().copy()
-        self.ctx.converged_matrix_pks = afm_matrices.get_list().copy()  # Only successful result matrices
-        self.ctx.all_calculation_pks = self.ctx.afm_wc.outputs.all_calculation_pks.get_list().copy()
+        # self.ctx.all_matrix_pks = mag_scan_matrices.get_list().copy()
+        self.ctx.converged_matrix_pks = mag_scan_matrices.get_list().copy()  # Only successful result matrices
+        self.ctx.all_calculation_pks = self.ctx.mag_scan_wc.outputs.all_calculation_pks.get_list().copy()
         self.ctx.generation_results = {}
         
         # Store AFM results
         self.ctx.generation_results[0] = {
-            'type': 'afm',
-            'n_calculations': len(afm_matrices.get_list()),
-            'converged_matrix_pks': afm_matrices.get_list(),
-            'converged_calculation_pks': afm_calculation_pks.get_list()
+            'type': 'mag_scan',
+            'n_calculations': len(mag_scan_matrices.get_list()),
+            'converged_matrix_pks': mag_scan_matrices.get_list(),
+            'converged_calculation_pks': mag_scan_calculation_pks.get_list()
         }
         
         # Propose initial matrices for first constrained batch
         proposal_kwargs = {}
+
+        # always include generation index (required by GP mode)
+        proposal_kwargs['current_generation'] = Int(self.ctx.generation)
+
         if 'proposal_kwargs' in self.inputs:
-
-            # add generation number to proposal kwargs
-            proposal_kwargs['current_generation'] = Int(self.ctx.generation)
-
             # Convert proposal_kwargs to AiiDA types if needed
             for key, value in self.inputs.proposal_kwargs.get_dict().items():
                 if isinstance(value, str):
@@ -181,12 +311,12 @@ class GlobalConstrainedSearchWorkChain(WorkChain):
         
         # For initial proposal, use AFM results (holistic mode doesn't apply here)
         proposed_matrices_pks = aiida_propose_occ_matrices_from_results(
-            occ_matr_pks=afm_matrices,
-            calc_pks=afm_calculation_pks,
+            occ_matr_pks=mag_scan_matrices,
+            calc_pks=mag_scan_calculation_pks,
             N=self.inputs.N,
             debug=self.inputs.proposal_debug,
             mode=self.inputs.proposal_mode,
-            tm_atoms=self.inputs.afm.tm_atoms,
+            hubbard_corr_atoms=self.inputs.mag_scan.hubbard_corr_atoms,
             **proposal_kwargs
         )
         
@@ -316,7 +446,7 @@ class GlobalConstrainedSearchWorkChain(WorkChain):
                 N=self.inputs.N,
                 debug=self.inputs.proposal_debug,
                 mode=self.inputs.proposal_mode,
-                tm_atoms=self.inputs.constrained.tm_atoms,
+                hubbard_corr_atoms=self.inputs.constrained.hubbard_corr_atoms,
                 **proposal_kwargs
             )
             

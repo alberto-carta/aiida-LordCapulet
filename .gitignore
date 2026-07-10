@@ -1,0 +1,28 @@
+# Python bytecode / cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Build / packaging
+*.egg-info/
+*.egg
+build/
+dist/
+
+# Virtual envs
+.venv/
+venv/
+env/
+
+# Examples: runtime outputs (workchain JSON caches, plot HTML, AiiDA logs,
+# leftover txt PK markers from the old caching scheme).
+examples/**/*.json
+examples/**/*_info.txt
+examples/**/aiida.log
+examples/plots/
+
+# OS / editor
+.DS_Store
+*.swp
+.idea/
+.vscode/
