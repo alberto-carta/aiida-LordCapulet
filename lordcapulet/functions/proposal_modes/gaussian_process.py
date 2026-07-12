@@ -359,7 +359,8 @@ def propose_gaussian_process_constraints(
                         databank, x_data, atoms, local_device,
                         apply_rotation=apply_rotation,
                         rotation_prob=rotation_prob,
-                        rotation_type=rotation_type
+                        rotation_type=rotation_type,
+                        use_torch=True,
                     )
             ensamble_batch[iguess,:] = guess.squeeze(0)
         end_ensamble = time.time()

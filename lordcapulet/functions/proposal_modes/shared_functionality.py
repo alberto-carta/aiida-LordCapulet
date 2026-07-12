@@ -93,139 +93,124 @@ def apply_random_rotation(matrices):
     
     return rotated_matrices
 
-def create_patchwork_guess(databank,
-                        x_train,
-                        atoms,
-                        device,
-                        apply_rotation=False,
-                        rotation_type = 'SO(3)',
-                        rotation_prob=1):
+def create_patchwork_guess(
+    databank,
+    x_train,
+    atoms,
+    device=None,
+    apply_rotation=False,
+    rotation_type='SO(3)',
+    rotation_prob=1.0,
+    rng=None,
+    use_torch=False,
+):
     """
-    Create a diverse initial guess by mixing atoms from different training points.
+    Create a diverse candidate occupation matrix by mixing atom blocks
+    from different training points, with optional spin flips, atom permutations,
+    and random rotations.
 
-    This should be reworked to only use a training databank,
-    It has absolute garbage performance right now and has no reason to do so
-    
+    Works with both numpy arrays (default) and PyTorch tensors.
+
     Strategy:
     1. For each atom, randomly select a training point
     2. With 50% probability, flip spins (swap up/down matrices)
     3. If atoms are of the same species, optionally permute them
     4. Optionally apply random rotations to break symmetry
-    
+
     Args:
-        databank: DataBank with atom information
-        x_train: Training data tensor [N, features]
-        atoms: List of atom IDs
-        device: torch device
-        apply_rotation: Whether to apply random rotations to each atom's matrices
-    
+        databank: DataBank instance.
+        x_train: Training data (numpy [N, features] or torch [N, features]).
+        atoms: List of atom IDs.
+        device: torch device (only used if use_torch=True).
+        apply_rotation: Whether to apply random rotations.
+        rotation_type: 'SO(3)', 'SO(N)', or 'Mixed'.
+        rotation_prob: Probability of applying rotation to each atom.
+        rng: Optional np.random.Generator for reproducibility.
+        use_torch: If True, x_train is a torch tensor; default False (numpy).
+
     Returns:
-        Patchwork guess tensor [1, 1, features]
+        numpy array [n_features] if use_torch=False,
+        torch tensor [1, 1, n_features] if use_torch=True.
     """
-    import random
     from copy import deepcopy
-    
-    # Step 1: Create patchwork by selecting random training points for each atom
-    # Start with a copy of the first training point's OccupationMatrixData
-    patchwork_occ = databank.from_pytorch(x_train[0].unsqueeze(0), atom_ids=atoms, spins=['up', 'down'])[0]
-    
-    # Deep copy the internal data to avoid modifying the original
+
+    if rng is None:
+        rng = np.random.default_rng()
+
+    if use_torch:
+        x_train_np = x_train.cpu().numpy()
+    else:
+        x_train_np = x_train
+
+    n_train = x_train_np.shape[0]
+
+    # --- Build patchwork ---
+    # Start with a copy of the first training point
+    patchwork_occ = databank.from_numpy(x_train_np[0:1], atom_ids=atoms, spins=['up', 'down'])[0]
     patchwork_data = deepcopy(patchwork_occ.data)
-    
-    source_indices = {}  # Track which training point each atom came from
 
     if rotation_type not in ['SO(3)', 'SO(N)', 'Mixed']:
         raise ValueError(f"Unknown rotation type: {rotation_type}")
-    
     if rotation_type == 'Mixed':
-        rotation_type = random.choice(['SO(3)', 'SO(N)'])
+        rotation_type = 'SO(3)' if rng.random() < 0.5 else 'SO(N)'
 
-    
     for atom_id in atoms:
-        # Randomly select a training point for this atom
-        source_idx = random.randint(0, len(x_train) - 1)
-        source_indices[atom_id] = source_idx
-        
-        # Extract occupation matrices from this training point
-        source_occ = databank.from_pytorch(x_train[source_idx].unsqueeze(0), atom_ids=atoms, spins=['up', 'down'])[0]
+        source_idx = rng.integers(0, n_train)
+        source_occ = databank.from_numpy(
+            x_train_np[source_idx:source_idx + 1], atom_ids=atoms, spins=['up', 'down']
+        )[0]
         up_mat = source_occ.get_occupation_matrix(atom_id, 'up')
         down_mat = source_occ.get_occupation_matrix(atom_id, 'down')
-        
-        # Step 2: With 50% probability, flip spins
-        if random.random() < 0.5:
-            up_mat, down_mat = down_mat, up_mat  # Swap
-        
-        # Update the patchwork data for this atom
+
+        # 50% chance to flip spins
+        if rng.random() < 0.5:
+            up_mat, down_mat = down_mat, up_mat
+
         patchwork_data[atom_id]['occupation_matrix']['up'] = up_mat
         patchwork_data[atom_id]['occupation_matrix']['down'] = down_mat
 
-        if apply_rotation and (random.random() < rotation_prob):
+        if apply_rotation and rng.random() < rotation_prob:
             if rotation_type == 'SO(3)':
-                # Generate random rotation parameters
-                angle = np.random.uniform(0, 2 * np.pi)
-                direction = uniform_direction.rvs(3)
-                
-                # Apply rotation
-                up_mat_rotated = rotate_QE_matrix(np.array(up_mat), angle, direction)
-                down_mat_rotated = rotate_QE_matrix(np.array(down_mat), angle, direction)
-                
-                # Update the data (store real parts for collinear calculations)
-                patchwork_data[atom_id]['occupation_matrix']['up'] = up_mat_rotated.real.tolist()
-                patchwork_data[atom_id]['occupation_matrix']['down'] = down_mat_rotated.real.tolist()
+                angle = rng.uniform(0, 2 * np.pi)
+                direction = uniform_direction.rvs(3, random_state=rng)
+                up_mat_rot = rotate_QE_matrix(np.array(up_mat), angle, direction)
+                down_mat_rot = rotate_QE_matrix(np.array(down_mat), angle, direction)
             elif rotation_type == 'SO(N)':
-                # Use random SO(N) matrix for rotation
-                R = special_ortho_group.rvs(len(up_mat))
+                R = special_ortho_group.rvs(len(up_mat), random_state=rng)
                 up_mat_np = np.array(up_mat)
                 down_mat_np = np.array(down_mat)
-                up_mat_rotated = R @ up_mat_np @ R.T
-                down_mat_rotated = R @ down_mat_np @ R.T
-                patchwork_data[atom_id]['occupation_matrix']['up'] = up_mat_rotated.real.tolist()
-                patchwork_data[atom_id]['occupation_matrix']['down'] = down_mat_rotated.real.tolist()
-    
-    # Step 3: If atoms are same species, optionally permute
-    # Group atoms by species (assuming atom IDs like "Fe1", "Fe2" have same species)
+                up_mat_rot = R @ up_mat_np @ R.T
+                down_mat_rot = R @ down_mat_np @ R.T
+            patchwork_data[atom_id]['occupation_matrix']['up'] = up_mat_rot.real.tolist()
+            patchwork_data[atom_id]['occupation_matrix']['down'] = down_mat_rot.real.tolist()
+
+    # --- Permute atoms of same species ---
     species_groups = {}
-    for atom_id in atoms:
-        # Get species from the patchwork data
-        species = patchwork_data[atom_id]['specie']
-        if species not in species_groups:
-            species_groups[species] = []
-        species_groups[species].append(atom_id)
-    
-    # For each species with multiple atoms, decide whether to permute
-    for species, atom_group in species_groups.items():
-        if len(atom_group) > 1 and random.random() < 0.5:
-            # Permute matrices among atoms of same species
-            shuffled_group = atom_group.copy()
-            random.shuffle(shuffled_group)
-            
-            # Create temporary storage of occupation matrices
-            temp_matrices = {}
-            for atom in atom_group:
-                temp_matrices[atom] = {
-                    'up': patchwork_data[atom]['occupation_matrix']['up'],
-                    'down': patchwork_data[atom]['occupation_matrix']['down']
-                }
-            
-            # Apply permutation
-            for orig_atom, new_atom in zip(atom_group, shuffled_group):
-                patchwork_data[orig_atom]['occupation_matrix'] = temp_matrices[new_atom]
-    
-    # Create new OccupationMatrixData from the modified data
+    for a in atoms:
+        species = patchwork_data[a]['specie']
+        species_groups.setdefault(species, []).append(a)
+
+    for species, group in species_groups.items():
+        if len(group) > 1 and rng.random() < 0.5:
+            shuffled = group.copy()
+            rng.shuffle(shuffled)
+            temp = {a: {
+                'up': patchwork_data[a]['occupation_matrix']['up'],
+                'down': patchwork_data[a]['occupation_matrix']['down'],
+            } for a in group}
+            for orig, new in zip(group, shuffled):
+                patchwork_data[orig]['occupation_matrix'] = temp[new]
+
+    # --- Finalize ---
     from lordcapulet.data_structures.occupation_matrix import OccupationMatrixData
     patchwork_occ_final = OccupationMatrixData(patchwork_data)
-    
-        
-    # Recreate OccupationMatrixData with rotated matrices
-    patchwork_occ_final = OccupationMatrixData(patchwork_data)
-    
-    # Convert to tensor using the new method
-    patchwork_tensor = databank.to_pytorch_single_matrix(
-        patchwork_occ_final, 
-        atom_ids=atoms, 
-        spins=['up', 'down'], 
-        device=device
-    )
-    
-    # Reshape to [1, 1, features] for optimize_acqf
-    return patchwork_tensor.unsqueeze(0).unsqueeze(0)
+
+    if use_torch:
+        vec = databank.to_pytorch_single_matrix(
+            patchwork_occ_final, atom_ids=atoms, spins=['up', 'down'], device=device
+        )
+        return vec.unsqueeze(0).unsqueeze(0)
+    else:
+        return databank.to_numpy_single_matrix(
+            patchwork_occ_final, atom_ids=atoms, spins=['up', 'down'],
+        )

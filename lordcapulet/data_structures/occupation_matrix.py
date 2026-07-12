@@ -425,6 +425,60 @@ class OccupationMatrixData:
         """
         return self.get_trace(atom_label, 'up') - self.get_trace(atom_label, 'down')
     
+    def get_tr_n_sq(self, atom_label: str, spin: str) -> float:
+        """
+        Compute tr(n²) for a given atom and spin channel.
+        
+        For real symmetric matrices: tr(n²) = Σᵢ n_ii² + 2 * Σ_{i<j} n_ij²
+        
+        Args:
+            atom_label: Atom label (e.g., 'Atom_1')
+            spin: Spin channel ('up' or 'down')
+            
+        Returns:
+            tr(n²) value
+        """
+        mat = self.get_occupation_matrix_as_numpy(atom_label, spin)
+        n = mat.shape[0]
+        # Diagonal contributions
+        tr_n_sq = np.sum(np.diag(mat) ** 2)
+        # Off-diagonal: each pair (i,j) with i<j contributes 2 * n_ij²
+        for i in range(n):
+            for j in range(i + 1, n):
+                tr_n_sq += 2.0 * mat[i, j] ** 2
+        return float(tr_n_sq)
+    
+    def get_hubbard_term(self, atom_label: str, spin: str) -> float:
+        """
+        Compute tr[n(1-n)] = tr(n) - tr(n²) for a given atom and spin.
+        
+        This is the Hubbard U energy correction term per spin channel.
+        
+        Args:
+            atom_label: Atom label (e.g., 'Atom_1')
+            spin: Spin channel ('up' or 'down')
+            
+        Returns:
+            tr[n(1-n)] value
+        """
+        tr_n = self.get_trace(atom_label, spin)
+        tr_n_sq = self.get_tr_n_sq(atom_label, spin)
+        return tr_n - tr_n_sq
+    
+    def get_diagonal_elements(self, atom_label: str, spin: str) -> np.ndarray:
+        """
+        Get diagonal elements of occupation matrix as a 1D numpy array.
+        
+        Args:
+            atom_label: Atom label (e.g., 'Atom_1')
+            spin: Spin channel ('up' or 'down')
+            
+        Returns:
+            1D numpy array of diagonal elements n_ii
+        """
+        mat = self.get_occupation_matrix_as_numpy(atom_label, spin)
+        return np.diag(mat).copy()
+    
     def __len__(self) -> int:
         """Return number of atoms."""
         return len(self._data)
