@@ -4,7 +4,7 @@ import os
 import aiida
 from aiida.engine import submit
 from lordcapulet.workflows import GlobalConstrainedSearchWorkChain
-from lordcapulet.utils import prepare_tm_info, prepare_hubbard_structure
+from lordcapulet.utils import prepare_hubbard_corr_info, prepare_hubbard_structure
 from ase.io import read
 
 # Load AiiDA profile
@@ -28,7 +28,7 @@ else:
     atoms = read('../FeO.scf.in', format='espresso-in')  # Adjust path as needed
 
     # tag transition metal atoms and get their manifolds and dimensions
-    hubbard_corr_atoms, hubbard_corr_manifolds, hubbard_corr_dimensions = prepare_tm_info(atoms, table={'Fe'})
+    hubbard_corr_atoms, hubbard_corr_manifolds, hubbard_corr_dimensions = prepare_hubbard_corr_info(atoms, table={'Fe'})
 
     print("Tagged transition atoms:", hubbard_corr_atoms)
     print("Corresponding manifolds:", hubbard_corr_manifolds)

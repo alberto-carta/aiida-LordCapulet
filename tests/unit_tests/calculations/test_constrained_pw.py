@@ -146,3 +146,54 @@ class TestPrepareForSubmission:
             content = handle.read()
 
         file_regression.check(content, encoding='utf-8', extension='.in')
+
+    def test_oscdft_flag_injected_without_user_settings(
+        self, fixture_sandbox, generate_calc_job, generate_inputs_constrained_pw,
+    ):
+        """The plugin must add '-oscdft' to pw.x cmdline when the user did
+        not supply a ``settings`` input. Without the flag, pw.x silently
+        ignores oscdft.in and the constraint never reaches QE."""
+        inputs = generate_inputs_constrained_pw()
+        assert 'settings' not in inputs
+
+        calc_info = generate_calc_job(
+            fixture_sandbox, 'lordcapulet.constrained_pw', inputs,
+        )
+        assert '-oscdft' in calc_info.codes_info[0].cmdline_params
+
+    def test_oscdft_flag_preserved_when_user_supplies_cmdline(
+        self, fixture_sandbox, generate_calc_job, generate_inputs_constrained_pw,
+    ):
+        """If the user passes their own CMDLINE (e.g. extra MPI/QE flags),
+        '-oscdft' is still present in the final cmdline."""
+        from aiida.orm import Dict
+
+        inputs = generate_inputs_constrained_pw()
+        inputs['settings'] = Dict(dict={
+            'CMDLINE': ['-ndiag', '1'],
+        })
+
+        calc_info = generate_calc_job(
+            fixture_sandbox, 'lordcapulet.constrained_pw', inputs,
+        )
+        cmdline = calc_info.codes_info[0].cmdline_params
+        assert '-oscdft' in cmdline
+        assert '-ndiag' in cmdline
+
+    def test_oscdft_flag_not_duplicated_when_user_already_supplied_it(
+        self, fixture_sandbox, generate_calc_job, generate_inputs_constrained_pw,
+    ):
+        """If the user already passed '-oscdft' explicitly, the plugin must
+        not double it (pw.x would error on duplicate flags)."""
+        from aiida.orm import Dict
+
+        inputs = generate_inputs_constrained_pw()
+        inputs['settings'] = Dict(dict={
+            'CMDLINE': ['-oscdft'],
+        })
+
+        calc_info = generate_calc_job(
+            fixture_sandbox, 'lordcapulet.constrained_pw', inputs,
+        )
+        cmdline = calc_info.codes_info[0].cmdline_params
+        assert cmdline.count('-oscdft') == 1

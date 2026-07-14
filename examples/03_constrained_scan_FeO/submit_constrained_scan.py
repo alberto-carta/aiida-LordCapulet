@@ -26,7 +26,7 @@ from ase.io import read
 from lordcapulet.workflows import ConstrainedScanWorkChain
 from lordcapulet.data_structures.occupation_matrix import OccupationMatrixData
 from lordcapulet.functions.proposal_modes.shared_functionality import apply_random_rotation
-from lordcapulet.utils import prepare_tm_info, prepare_hubbard_structure
+from lordcapulet.utils import prepare_hubbard_corr_info, prepare_hubbard_structure
 
 # ── Load AiiDA profile ──────────────────────────────────────────────────────
 aiida.load_profile()
@@ -50,7 +50,7 @@ else:
     # ── Build the structure ─────────────────────────────────────────────────
     atoms = read('../FeO.scf.in', format='espresso-in')
 
-    hubbard_corr_atoms, hubbard_corr_manifolds, hubbard_corr_dimensions = prepare_tm_info(atoms, table={'Fe'})
+    hubbard_corr_atoms, hubbard_corr_manifolds, hubbard_corr_dimensions = prepare_hubbard_corr_info(atoms, table={'Fe'})
 
     print("Tagged transition atoms:", hubbard_corr_atoms)
     print("Corresponding manifolds:", hubbard_corr_manifolds)

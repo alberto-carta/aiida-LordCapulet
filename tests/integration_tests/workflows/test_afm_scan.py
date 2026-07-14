@@ -3,7 +3,7 @@
 import pytest
 from unittest.mock import patch, MagicMock
 import numpy as np
-from aiida.orm import Dict, Float, List, Code, KpointsData
+from aiida.orm import Dict, Float, List, Code, KpointsData, Int
 
 
 # ---------------------------------------------------------------------------
@@ -140,6 +140,30 @@ class TestAFMScanPrepareConfigs:
         process.prepare_configs()
 
         assert len(process.ctx.magnetic_configs) == 8
+
+    def test_max_configurations_caps_exhaustive_scan(
+        self, generate_workchain, generate_structure, generate_kpoints_mesh,
+        fixture_code, pseudo_family,
+    ):
+        """max_configurations should cap the otherwise exhaustive 2^N scan."""
+        structure = generate_structure('feo')
+        kpoints = generate_kpoints_mesh(4)
+        code = fixture_code('quantumespresso.pw')
+
+        inputs = {
+            'structure': structure,
+            'parameters': Dict({'CONTROL': {'calculation': 'scf'}, 'SYSTEM': {'ecutwfc': 30, 'ecutrho': 240, 'nspin': 2}}),
+            'kpoints': kpoints,
+            'code': code,
+            'hubbard_corr_atoms': List(list=['Fe1', 'Fe2', 'Fe3', 'Fe4']),
+            'max_configurations': Int(3),
+        }
+
+        process = generate_workchain('lordcapulet.standard_magnetic_scan', inputs)
+        with patch.object(process, 'report'):
+            process.prepare_configs()
+
+        assert len(process.ctx.magnetic_configs) == 3
 
     def test_sign_patterns(self, generate_workchain, generate_structure, generate_kpoints_mesh, fixture_code, pseudo_family):
         """Each configuration should have a unique sign pattern."""

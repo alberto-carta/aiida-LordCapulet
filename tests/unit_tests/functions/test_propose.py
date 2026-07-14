@@ -107,6 +107,75 @@ class TestProposeNewConstraints:
         assert isinstance(proposals, list)
         assert len(proposals) == 3
 
+    def test_gp_generation_zero_metadata_marks_random_warmup(self):
+        """Metadata should identify GP generation-0 proposals as random warmup."""
+        from lordcapulet.functions.propose import propose_new_constraints
+
+        occ_list = _make_sample_occ_list()
+        energies = [-100.0, -99.5, -101.0]
+
+        proposals, metadata = propose_new_constraints(
+            occ_list,
+            N=3,
+            mode='gp',
+            debug=False,
+            energies=energies,
+            current_generation=0,
+            return_metadata=True,
+        )
+
+        assert len(proposals) == 3
+        assert metadata['proposal_source'] == 'random_warmup'
+        assert metadata['proposal_mode'] == 'gp'
+        assert metadata['proposal_generation'] == 0
+
+    def test_gp_fallback_metadata_marks_random_fallback(self, monkeypatch):
+        """Metadata should distinguish a GP exception from a real GP proposal."""
+        import lordcapulet.functions.propose as propose_module
+
+        occ_list = _make_sample_occ_list()
+        energies = [-100.0, -99.5, -101.0]
+
+        def _raise_gp(*args, **kwargs):
+            raise RuntimeError('forced GP failure')
+
+        monkeypatch.setattr(
+            propose_module,
+            'propose_gaussian_process_constraints',
+            _raise_gp,
+        )
+
+        proposals, metadata = propose_module.propose_new_constraints(
+            occ_list,
+            N=2,
+            mode='gp',
+            debug=False,
+            energies=energies,
+            current_generation=1,
+            return_metadata=True,
+        )
+
+        assert len(proposals) == 2
+        assert metadata['proposal_source'] == 'random_fallback'
+        assert metadata['proposal_mode'] == 'gp'
+        assert metadata['proposal_generation'] == 1
+
+    def test_aiida_nodes_accept_proposal_metadata_before_store(self, aiida_profile):
+        """The calcfunction can attach proposal extras before returning nodes."""
+        from aiida.orm import JsonableData, List
+
+        occ_data = _make_sample_occ_list(n_matrices=1)[0]
+
+        json_node = JsonableData(occ_data)
+        json_node.base.extras.set('proposal_source', 'random_warmup')
+        json_node.store()
+
+        list_node = List(list=[json_node.pk])
+        list_node.base.extras.set('proposal_source', 'random_warmup')
+
+        assert json_node.base.extras.get('proposal_source') == 'random_warmup'
+        assert list_node.base.extras.get('proposal_source') == 'random_warmup'
+
     def test_proposals_preserve_atom_labels(self):
         """Proposals should preserve atom labels from input."""
         from lordcapulet.functions.propose import propose_new_constraints
@@ -128,3 +197,40 @@ class TestProposeNewConstraints:
         input_species = occ_list[0].get_atom_species()
         for p in proposals:
             assert p.get_atom_species() == input_species
+
+    def test_dispatch_clips_all_proposal_values_to_oscdft_range(self, monkeypatch):
+        """Dispatcher should enforce OSCDFT target value bounds for every mode."""
+        import lordcapulet.functions.propose as propose_module
+
+        occ_list = _make_sample_occ_list(n_matrices=1, n_atoms=1, dim=2)
+        invalid = OccupationMatrixData({
+            'atom1': {
+                'specie': 'Fe',
+                'shell': '3d',
+                'occupation_matrix': {
+                    'up': [[1.2, -1.3], [0.5, -0.2]],
+                    'down': [[-2.0, 0.0], [0.0, 2.0]],
+                },
+            }
+        })
+
+        monkeypatch.setattr(
+            propose_module,
+            'propose_random_constraints',
+            lambda *args, **kwargs: [invalid],
+        )
+
+        proposals = propose_module.propose_new_constraints(
+            occ_list,
+            N=1,
+            mode='random',
+            debug=False,
+        )
+
+        for spin in ('up', 'down'):
+            matrix = proposals[0].get_occupation_matrix_as_numpy('atom1', spin)
+            assert np.all(matrix >= -1.0)
+            assert np.all(matrix <= 1.0)
+
+        assert proposals[0].get_occupation_matrix_as_numpy('atom1', 'up')[0, 0] == 1.0
+        assert proposals[0].get_occupation_matrix_as_numpy('atom1', 'up')[0, 1] == -1.0

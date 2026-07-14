@@ -1,5 +1,5 @@
 from aiida.engine import WorkChain, ToContext, submit, append_
-from aiida.orm import load_group, List, Dict, Code, KpointsData, StructureData, Float, Str, load_node, JsonableData
+from aiida.orm import load_group, List, Dict, Code, KpointsData, StructureData, Float, Str, Int, load_node, JsonableData
 from aiida.plugins import CalculationFactory
 # import UpfData
 from aiida.orm import UpfData
@@ -23,6 +23,8 @@ class StandardMagneticScanWorkChain(ProtocolMixin, WorkChain):
         spec.input('code', valid_type=Code)
         spec.input('hubbard_corr_atoms', valid_type=List)
         spec.input('magnitude', valid_type=Float, default=Float(0.5))
+        spec.input('max_configurations', valid_type=Int, required=False,
+                  help='Optional cap on the number of magnetic configurations to submit')
         spec.input('walltime_hours', valid_type=Float, default=lambda: Float(1.0),
                   help='Walltime in hours for each magnetic configuration calculation (default: 1 hour)')
         spec.input('pseudo_family_string', valid_type=Str,
@@ -93,6 +95,8 @@ class StandardMagneticScanWorkChain(ProtocolMixin, WorkChain):
         builder.parameters = Dict(dict=inputs['parameters'])
         builder.hubbard_corr_atoms = List(list=hubbard_corr_atoms)
         builder.magnitude = Float(inputs.get('magnitude', 0.5))
+        if 'max_configurations' in inputs and inputs['max_configurations'] is not None:
+            builder.max_configurations = Int(inputs['max_configurations'])
         builder.walltime_hours = Float(inputs.get('walltime_hours', 2.0))
         builder.pseudo_family_string = Str(
             inputs.get('pseudo_family', 'SSSP/1.3/PBEsol/efficiency')
@@ -103,7 +107,23 @@ class StandardMagneticScanWorkChain(ProtocolMixin, WorkChain):
         hubbard_corr_atoms = self.inputs.hubbard_corr_atoms.get_list()
         N = len(hubbard_corr_atoms)
         self.ctx.magnetic_configs = []
-        for i in range(2 ** N):
+        total_configurations = 2 ** N
+        config_indices = range(total_configurations)
+
+        if 'max_configurations' in self.inputs:
+            max_configurations = self.inputs.max_configurations.value
+            if max_configurations < 1:
+                raise ValueError('max_configurations must be a positive integer')
+            if max_configurations < total_configurations:
+                config_indices = np.linspace(
+                    0, total_configurations - 1, max_configurations, dtype=int
+                ).tolist()
+                self.report(
+                    f"Limiting magnetic scan to {max_configurations}/"
+                    f"{total_configurations} configurations"
+                )
+
+        for i in config_indices:
             config = {}
             binary_string = format(i, f'0{N}b')
             for j in range(N):

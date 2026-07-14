@@ -12,7 +12,7 @@ import os
 import aiida
 from aiida.engine import submit
 from lordcapulet.workflows import StandardMagneticScanWorkChain
-from lordcapulet.utils import prepare_tm_info, prepare_hubbard_structure
+from lordcapulet.utils import prepare_hubbard_corr_info, prepare_hubbard_structure
 from ase.io import read
 
 aiida.load_profile()
@@ -33,7 +33,7 @@ if os.path.exists(JSON_FILE):
 else:
     atoms = read('../FeO.scf.in', format='espresso-in')
 
-    hubbard_corr_atoms, hubbard_corr_manifolds, hubbard_corr_dimensions = prepare_tm_info(atoms, table={'Fe'})
+    hubbard_corr_atoms, hubbard_corr_manifolds, hubbard_corr_dimensions = prepare_hubbard_corr_info(atoms, table={'Fe'})
 
     print("Tagged transition atoms:", hubbard_corr_atoms)
     print("Corresponding manifolds:", hubbard_corr_manifolds)

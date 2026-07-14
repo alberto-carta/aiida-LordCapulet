@@ -138,4 +138,13 @@ class ConstrainedPWCalculation(PwCalculation):
             # Fallback for legacy calcinfo
             calcinfo['retrieve_list'].append('oscdft.in')
 
+        # pw.x reads oscdft.in only when invoked with the '-oscdft' flag.
+        # Inject it here so direct users of this calc plugin never have to
+        # remember to pass settings['CMDLINE'] = ['-oscdft'] themselves.
+        code_info = calcinfo.codes_info[0]
+        cmdline = list(code_info.cmdline_params or [])
+        if '-oscdft' not in cmdline:
+            cmdline.append('-oscdft')
+        code_info.cmdline_params = cmdline
+
         return calcinfo

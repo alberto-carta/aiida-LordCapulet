@@ -29,8 +29,9 @@ from .Bayesian.acquisition import AnalyticCustomPreference, compute_total_prefer
 # BoTorch components
 from botorch.acquisition import UpperConfidenceBound
 from botorch.acquisition.objective import ScalarizedPosteriorTransform
-from botorch.generation.sampling import BoltzmannSampling
 from botorch.exceptions import InputDataWarning
+from botorch.utils.sampling import batched_multinomial
+from botorch.utils.transforms import standardize
 from gpytorch.utils.warnings import GPInputWarning
 from gpytorch.constraints import GreaterThan
 
@@ -39,6 +40,46 @@ from gpytorch.constraints import GreaterThan
 
 # Suppress the BoTorch float32 warning
 warnings.filterwarnings("ignore", category=InputDataWarning)
+
+
+def _stable_boltzmann_sample(
+    acq_func,
+    X: torch.Tensor,
+    num_samples: int,
+    eta: float,
+    replacement: bool = False,
+) -> torch.Tensor:
+    """Sample candidates from Boltzmann acquisition weights without exp overflow."""
+    X_eval = X.permute(-2, *range(X.ndim - 2), -1).unsqueeze(-2)
+    acqval = acq_func(X_eval)
+    acqval = acqval.permute(*range(1, X.ndim - 1), 0)
+
+    scores = eta * standardize(acqval)
+    finite_scores = torch.isfinite(scores)
+    if not finite_scores.any(dim=-1, keepdim=True).all():
+        raise ValueError("Boltzmann sampling received no finite acquisition scores")
+
+    scores = scores.masked_fill(~finite_scores, -torch.inf)
+    scores = scores - scores.max(dim=-1, keepdim=True).values
+    # Floor shifted scores so tail candidates keep a small nonzero weight
+    # (exp(-15) ~ 3e-7) instead of underflowing to 0. Prevents high-eta weight
+    # collapse and multinomial starvation when sampling without replacement.
+    # Re-apply the invalid mask afterwards so genuinely non-finite candidates
+    # stay at weight 0 rather than getting floored up to exp(-15).
+    scores = scores.clamp_min(-15.0)
+    scores = scores.masked_fill(~finite_scores, -torch.inf)
+    weights = torch.exp(scores)
+    weights = weights.masked_fill(~torch.isfinite(weights), 0.0)
+
+    if (weights.sum(dim=-1) <= 0).any():
+        raise ValueError("Boltzmann sampling produced zero total candidate weight")
+
+    idcs = batched_multinomial(
+        weights=weights,
+        num_samples=num_samples,
+        replacement=replacement,
+    )
+    return torch.gather(X, -2, idcs.unsqueeze(-1).expand(*idcs.shape, X.size(-1)))
 
 
 
@@ -365,11 +406,16 @@ def propose_gaussian_process_constraints(
         end_ensamble = time.time()
         reporter(f"Generated ensamble of {ensamble_size} candidates in {end_ensamble - start_ensamble:.2f} seconds")
 
-        sampler = BoltzmannSampling(acq_func=batched_acqf, eta =eta, replacement=False) # high eta, low T
         start_sampling = time.time()
 
         with torch.no_grad():
-            candidates = sampler(ensamble_batch, num_samples = N)
+            candidates = _stable_boltzmann_sample(
+                acq_func=batched_acqf,
+                X=ensamble_batch,
+                num_samples=N,
+                eta=eta,
+                replacement=False,
+            )
 
         end_sampling = time.time()
 
