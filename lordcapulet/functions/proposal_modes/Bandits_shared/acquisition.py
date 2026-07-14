@@ -92,7 +92,6 @@ def boltzmann_sample(
     shifted = acq_values - np.max(acq_values)
     weights = np.exp(eta * shifted)
     probs = weights / np.sum(weights)
-
     indices = rng.choice(
         len(acq_values),
         size=num_samples,

@@ -7,7 +7,7 @@ Provides:
     propose_linear_bandit_constraints() — generates occupation matrix proposals
     using Bayesian linear regression with LCB acquisition + Boltzmann sampling.
 
-Config structure (passed as gp_config for API consistency):
+Config structure (passed as bandit_config for API consistency):
     {
         "method": "ridge",          # "ridge" or "ard"
         "model_kwargs": {           # passed to BayesianRidge / ARDRegression
@@ -73,7 +73,7 @@ def propose_linear_bandit_constraints(
     energies: List[float],
     natoms: int,
     N: int,
-    gp_config: Optional[Dict[str, Any]] = None,
+    bandit_config: Optional[Dict[str, Any]] = None,
     debug: bool = False,
     reporter=None,
     **kwargs,
@@ -93,7 +93,7 @@ def propose_linear_bandit_constraints(
         energies: Total energies (eV) for each calculation.
         natoms: Number of atoms (for API consistency, inferred if needed).
         N: Number of proposals to generate.
-        gp_config: Configuration dict (see module docstring).
+        bandit_config: Configuration dict (see module docstring).
         debug: If True, print/report extra diagnostics.
         reporter: Callable for logging (defaults to print).
 
@@ -104,17 +104,17 @@ def propose_linear_bandit_constraints(
         reporter = print
 
     # --- Default config -------------------------------------------------------
-    if gp_config is None:
-        gp_config = {}
+    if bandit_config is None:
+        bandit_config = {}
 
-    method = gp_config.get("method", "ridge")
+    method = bandit_config.get("method", "ard")  # ARD with safe pruning is the default
     if method not in ("ridge", "ard"):
         raise ValueError(f"Unknown method '{method}'. Use 'ridge' or 'ard'.")
 
-    model_kwargs = gp_config.get("model_kwargs", {})
-    acq_cfg = gp_config.get("acquisition", {})
-    opt_cfg = gp_config.get("optimization", {})
-    feat_cfg = gp_config.get("features", {})
+    model_kwargs = bandit_config.get("model_kwargs", {})
+    acq_cfg = bandit_config.get("acquisition", {})
+    opt_cfg = bandit_config.get("optimization", {})
+    feat_cfg = bandit_config.get("features", {})
 
     beta = acq_cfg.get("beta", 0.5)
     eta = acq_cfg.get("eta", 30.0)
@@ -150,9 +150,30 @@ def propose_linear_bandit_constraints(
              f"heisenberg={feat_cfg.get('include_heisenberg', True)}, "
              f"pair_products={feat_cfg.get('include_pair_products', False)}")
 
-    # --- Step 3: Scale & fit model --------------------------------------------
-    scaler = StandardScaler()
-    X_scaled = scaler.fit_transform(X)
+    # --- Step 3: Drop near-constant features (std ≈ 0) before scaling ---------
+    # StandardScaler divides by std, so near-zero-variance features (common for
+    # crystal-field terms on unoccupied atoms) get blown up to astronomical
+    # values.  Drop them early so they never pollute predictions.
+    # Threshold 1e-12 → scaled values up to ~1e12 (bad).
+    # Threshold 1e-8  → scaled values up to ~1e8  (tolerable for linear models).
+    # feature_std = np.std(X, axis=0)
+    # STD_THRESHOLD = 1e-8
+    # keep_mask = feature_std > STD_THRESHOLD
+    # n_dropped = int(np.sum(~keep_mask))
+    # if n_dropped > 0:
+    #     X = X[:, keep_mask]
+    #     feature_names = [fn for fn, k in zip(feature_names, keep_mask) if k]
+    #     reporter(f"  Dropped {n_dropped} near-constant features (std < {STD_THRESHOLD}) "
+    #              f"→ {X.shape[1]} features remain")
+
+    # --- Step 4: Scale & fit model --------------------------------------------
+    # Scaling physical informed features works meh, commenting out for now
+
+    # scaler = StandardScaler()
+    # X_scaled = scaler.fit_transform(X)
+
+    X_scaled = X.copy()
+
 
     if method == "ridge":
         model = BayesianRidge(**model_kwargs)
@@ -171,8 +192,18 @@ def propose_linear_bandit_constraints(
     reporter(f"--- Training Metrics ---")
     reporter(f"  In-sample R² = {r2_train:.4f}")
     reporter(f"  In-sample RMSE = {rmse_train:.4f} eV")
-    reporter(f"  Noise precision α = {model.alpha_:.4f}")
-    reporter(f"  Prior precision λ = {model.lambda_:.4f}")
+
+    # alpha_ and lambda_ are scalars for BayesianRidge, arrays for ARD
+    alpha_val = model.alpha_
+    lambda_val = model.lambda_
+    if isinstance(alpha_val, np.ndarray):
+        reporter(f"  Noise precision α = {np.mean(alpha_val):.4f}  (array, mean)")
+    else:
+        reporter(f"  Noise precision α = {alpha_val:.4f}")
+    if isinstance(lambda_val, np.ndarray):
+        reporter(f"  Prior precision λ = {np.mean(lambda_val):.4f}  (array, mean)")
+    else:
+        reporter(f"  Prior precision λ = {lambda_val:.4f}")
 
     if method == "ard":
         n_active = int(np.sum(np.abs(model.coef_) > 1e-6))
@@ -228,7 +259,13 @@ def propose_linear_bandit_constraints(
         energies=[0.0] * ensamble_size,  # placeholder
     )
     X_ensamble, _ = ensamble_db.to_feature_matrix(atom_ids=atoms, **feat_cfg)
-    X_ensamble_scaled = scaler.transform(X_ensamble)
+
+    # Apply same feature mask used during training
+    # if n_dropped > 0:
+    #     X_ensamble = X_ensamble[:, keep_mask]
+    # X_ensamble_scaled = scaler.transform(X_ensamble)
+
+    X_ensamble_scaled = X_ensamble.copy()
 
     mu_ensamble, sigma_ensamble = model.predict(X_ensamble_scaled, return_std=True)
     t1 = time.time()

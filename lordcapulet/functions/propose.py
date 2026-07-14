@@ -10,6 +10,7 @@ from aiida.engine import calcfunction, Process
 
 from .proposal_modes import propose_random_constraints, propose_random_so_n_constraints
 from .proposal_modes import propose_gaussian_process_constraints
+from .proposal_modes import propose_linear_bandit_constraints, propose_forest_bandit_constraints
 from lordcapulet.data_structures import OccupationMatrixData, extract_occupations_from_calc, filter_atoms_by_species
 
 
@@ -131,12 +132,11 @@ def aiida_propose_occ_matrices_from_results(
         reporter(f"Using proposal mode: {mode.value} with N = {N.value} samples per generation")
 
 
-    # if the mode is 'gp' or 'gaussian_process' we need to
-    # also pass the total energies from the calculation pks
-
-    if mode.value in ['gp', 'gaussian_process']:
+    # if the mode is 'gp' or 'gaussian_process' or a bandit mode,
+    # we need to also pass the total energies from the calculation pks
+    _energy_modes = {'gp', 'gaussian_process', 'linear_bandit', 'forest_bandit', 'forest', 'rf'}
+    if mode.value in _energy_modes:
         energies = [ load_node(pk).outputs.output_parameters.get_dict().get('energy') for pk in calc_pks.get_list() ]
-
         kwargs_internal['energies'] = energies
 
 
@@ -223,38 +223,26 @@ def propose_new_constraints(occ_matr_list, N, mode='random', debug=True, reporte
             proposals = propose_random_so_n_constraints(occ_matr_list, natoms, N, debug=debug, **kwargs)
 
         case 'gaussian_process' | 'gp':
-            # Pop energies from kwargs (required for GP mode)
+            # TODO: merge with linear_bandit/forest_bandit — identical structure
             energies = kwargs.pop('energies', None)
             if energies is None:
                 raise ValueError("Energies must be provided for Gaussian Process proposal mode")
             
             gp_config = kwargs.pop('gp_config', None)
 
-
             if debug:
                 reporter(f"Energies provided: {energies}")
                 reporter(f"Remaining kwargs keys: {list(kwargs.keys())}")
 
-
-            # test for the existence of current generation in kwargs
             current_generation = kwargs.pop('current_generation', None)
-            
             assert current_generation is not None, "current_generation must be provided in kwargs for GP mode"
 
             if current_generation == 0:
-                # this would need changing if one wants to have a different
-                # number of initial random proposals, needs changing also
-                # in the workchain 
                 N_initial_random = kwargs.get('N_initial_random', N)
-
                 reporter(f"Current generation is {current_generation}, proposing {N_initial_random} random constraints for initial GP training")
                 proposals = propose_random_constraints(occ_matr_list, natoms,  N_initial_random, debug=debug, **kwargs)
             else:
-
                 reporter(f"Current generation is {current_generation}, proposing {N} constraints using Gaussian Process")
-                # try to generate proposals using GP, if it fails, report the error  and traceback
-                # and fall back to random proposals
-
                 try:
                     proposals = propose_gaussian_process_constraints(
                         occ_matr_list, energies, natoms, N, gp_config=gp_config,
@@ -263,10 +251,73 @@ def propose_new_constraints(occ_matr_list, N, mode='random', debug=True, reporte
                 except Exception as e:
                     reporter(f"Error in Gaussian Process proposal generation: {e}")
                     import traceback
-                    traceback_str = traceback.format_exc()
-                    reporter(traceback_str)
+                    reporter(traceback.format_exc())
                     reporter("Falling back to random constraint proposals")
                     proposals = propose_random_constraints(occ_matr_list, natoms,  N, debug=debug, **kwargs)
+
+        case 'linear_bandit':
+            # TODO: merge with gp/forest_bandit — identical structure
+            energies = kwargs.pop('energies', None)
+            if energies is None:
+                raise ValueError("Energies must be provided for linear bandit proposal mode")
+            
+            linear_bandit_config = kwargs.pop('linear_bandit_config', None)
+
+            if debug:
+                reporter(f"Energies provided: {energies}")
+
+            current_generation = kwargs.pop('current_generation', None)
+            assert current_generation is not None, "current_generation must be provided in kwargs for linear bandit mode"
+
+            if current_generation == 0:
+                N_initial_random = kwargs.get('N_initial_random', N)
+                reporter(f"Current generation is {current_generation}, proposing {N_initial_random} random constraints for initial training")
+                proposals = propose_random_constraints(occ_matr_list, natoms, N_initial_random, debug=debug, **kwargs)
+            else:
+                reporter(f"Current generation is {current_generation}, proposing {N} constraints using linear bandit (ridge/ARD)")
+                try:
+                    proposals = propose_linear_bandit_constraints(
+                        occ_matr_list, energies, natoms, N, gp_config=linear_bandit_config,
+                        debug=debug, reporter=reporter, **kwargs
+                    )
+                except Exception as e:
+                    reporter(f"Error in linear bandit proposal generation: {e}")
+                    import traceback
+                    reporter(traceback.format_exc())
+                    reporter("Falling back to random constraint proposals")
+                    proposals = propose_random_constraints(occ_matr_list, natoms, N, debug=debug, **kwargs)
+
+        case 'forest_bandit' | 'forest' | 'rf':
+            # TODO: merge with gp/linear_bandit — identical structure
+            energies = kwargs.pop('energies', None)
+            if energies is None:
+                raise ValueError("Energies must be provided for forest bandit proposal mode")
+            
+            rf_config = kwargs.pop('rf_config', None)
+
+            if debug:
+                reporter(f"Energies provided: {energies}")
+
+            current_generation = kwargs.pop('current_generation', None)
+            assert current_generation is not None, "current_generation must be provided in kwargs for forest bandit mode"
+
+            if current_generation == 0:
+                N_initial_random = kwargs.get('N_initial_random', N)
+                reporter(f"Current generation is {current_generation}, proposing {N_initial_random} random constraints for initial training")
+                proposals = propose_random_constraints(occ_matr_list, natoms, N_initial_random, debug=debug, **kwargs)
+            else:
+                reporter(f"Current generation is {current_generation}, proposing {N} constraints using forest bandit (Random Forest)")
+                try:
+                    proposals = propose_forest_bandit_constraints(
+                        occ_matr_list, energies, natoms, N, gp_config=rf_config,
+                        debug=debug, reporter=reporter, **kwargs
+                    )
+                except Exception as e:
+                    reporter(f"Error in forest bandit proposal generation: {e}")
+                    import traceback
+                    reporter(traceback.format_exc())
+                    reporter("Falling back to random constraint proposals")
+                    proposals = propose_random_constraints(occ_matr_list, natoms, N, debug=debug, **kwargs)
 
         case 'read':
             # raise implmementation error for now

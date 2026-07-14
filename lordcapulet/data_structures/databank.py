@@ -1046,16 +1046,19 @@ class DataBank:
     # ============================================================================
     # Feature matrix construction (numpy-only, no PyTorch)
     # ============================================================================
-    
+
+
+
+    # this needs better naming conventions 
     def to_feature_matrix(self,
                           atom_ids: Optional[List[str]] = None,
                           spins: List[str] = ['up', 'down'],
                           include_raw_occ: bool = True,
                           include_raw_occ_total: bool = False,
                           include_raw_occ_offdiag: bool = True,
-                          include_hubbard: bool = False,
+                          include_hubbard: bool = True,
                           include_hubbard_global: bool = False,
-                          include_hund_per_atom: bool = False,
+                          include_hund_per_atom: bool = True,
                           include_hund_global: bool = False,
                           include_heisenberg: bool = True,
                           include_trace_per_spin: bool = False,

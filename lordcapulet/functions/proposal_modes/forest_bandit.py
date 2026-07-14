@@ -7,7 +7,7 @@ Provides:
     propose_forest_bandit_constraints() — generates occupation matrix proposals
     using Random Forest with ensemble uncertainty + LCB + Boltzmann sampling.
 
-Config structure (passed as gp_config for API consistency):
+Config structure (passed as bandit_config for API consistency):
     {
         "model_kwargs": {
             "n_estimators": 300,
@@ -58,7 +58,7 @@ def propose_forest_bandit_constraints(
     energies: List[float],
     natoms: int,
     N: int,
-    gp_config: Optional[Dict[str, Any]] = None,
+    bandit_config: Optional[Dict[str, Any]] = None,
     debug: bool = False,
     reporter=None,
     **kwargs,
@@ -78,7 +78,7 @@ def propose_forest_bandit_constraints(
         energies: Total energies (eV).
         natoms: Number of atoms.
         N: Number of proposals.
-        gp_config: Configuration dict (see module docstring).
+        bandit_config: Configuration dict (see module docstring).
         debug: Extra diagnostics.
         reporter: Logging callable.
 
@@ -89,13 +89,13 @@ def propose_forest_bandit_constraints(
         reporter = print
 
     # --- Default config -------------------------------------------------------
-    if gp_config is None:
-        gp_config = {}
+    if bandit_config is None:
+        bandit_config = {}
 
-    model_kwargs = gp_config.get("model_kwargs", {})
-    acq_cfg = gp_config.get("acquisition", {})
-    opt_cfg = gp_config.get("optimization", {})
-    feat_cfg = gp_config.get("features", {})
+    model_kwargs = bandit_config.get("model_kwargs", {})
+    acq_cfg = bandit_config.get("acquisition", {})
+    opt_cfg = bandit_config.get("optimization", {})
+    feat_cfg = bandit_config.get("features", {})
 
     beta = acq_cfg.get("beta", 0.5)
     eta = acq_cfg.get("eta", 30.0)
@@ -133,8 +133,12 @@ def propose_forest_bandit_constraints(
 
     reporter(f"Feature matrix: {X.shape[0]} samples × {X.shape[1]} features")
     reporter(f"  raw_occ={feat_cfg.get('include_raw_occ', True)}, "
+             f"raw_occ_total={feat_cfg.get('include_raw_occ_total', False)}, "
+             f"raw_occ_offdiag={feat_cfg.get('include_raw_occ_offdiag', True)}, "
              f"hubbard={feat_cfg.get('include_hubbard', True)}, "
+             f"hubbard_global={feat_cfg.get('include_hubbard_global', False)}, "
              f"hund={feat_cfg.get('include_hund_per_atom', True)}, "
+             f"hund_global={feat_cfg.get('include_hund_global', False)}, "
              f"heisenberg={feat_cfg.get('include_heisenberg', True)}, "
              f"pair_products={feat_cfg.get('include_pair_products', False)}")
 
