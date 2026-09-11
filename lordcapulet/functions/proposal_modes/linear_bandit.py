@@ -32,24 +32,25 @@ Config structure (passed as bandit_config for API consistency):
             },
         },
         "features": {
-            # Raw occupation matrix elements (upper triangle, per atom, per spin).
-            # These capture the crystal-field / orbital arrangement.
-            "include_raw_occ": True,
-            # Hubbard term: tr[n(1-n)] = tr(n) - tr(n²) per atom (summed over spins).
+            # Crystal field: total (up+down) occupation matrix per atom,
+            # full upper triangle (diagonals + off-diagonals).
+            "include_crystal_field": True,
+            # Hubbard term: tr[n(1-n)] per atom (summed over spins).
             # Models the U correction: E_U = (U/2) * Σ tr[n(1-n)].
-            "include_hubbard": True,
+            "include_hubbard_per_atom": True,
+            # Hubbard term: Σ tr[n(1-n)] summed over all atoms → 1 feature.
+            "include_hubbard_summed_over_atoms": False,
             # Hund term: M² per atom where M = tr_up - tr_down.
             # Models the J correction: E_J = -(J/4) * Σ M².
             "include_hund_per_atom": True,
+            # Hund term: Σ M² summed over all atoms → 1 feature.
+            "include_hund_summed_over_atoms": False,
             # Heisenberg term: m_i · m_j for each atom pair (i < j).
             # Captures inter-atom magnetic coupling.
             "include_heisenberg": True,
-            # Trace: tr(n) per (atom, spin) — raw electron count per orbital.
-            "include_trace_per_spin": False,
             # Magnetic moment: M = tr_up - tr_down per atom.
             "include_moment_per_atom": False,
-            # Pair products: n_{ii}^{(a)} · n_{jj}^{(b)} for all diagonal elements
-            # across all atom pairs. Mimics the GP's non-local kernel products.
+            # Pair products: n_{ii}^{(a)} · n_{jj}^{(b)} across atom pairs.
             "include_pair_products": False,
         },
     }
@@ -144,11 +145,13 @@ def propose_linear_bandit_constraints(
     y = databank.energies  # numpy array
 
     reporter(f"Feature matrix: {X.shape[0]} samples × {X.shape[1]} features")
-    reporter(f"  raw_occ={feat_cfg.get('include_raw_occ', True)}, "
-             f"hubbard={feat_cfg.get('include_hubbard', True)}, "
-             f"hund={feat_cfg.get('include_hund_per_atom', True)}, "
-             f"heisenberg={feat_cfg.get('include_heisenberg', True)}, "
-             f"pair_products={feat_cfg.get('include_pair_products', False)}")
+    reporter(f"\ncrystal_field={feat_cfg.get('include_crystal_field', True)}, "
+             f"\nhubbard_per_atom={feat_cfg.get('include_hubbard_per_atom', True)}, "
+             f"\nhubbard_summed={feat_cfg.get('include_hubbard_summed_over_atoms', False)}, "
+             f"\nhund_per_atom={feat_cfg.get('include_hund_per_atom', True)}, "
+             f"\nhund_summed={feat_cfg.get('include_hund_summed_over_atoms', False)}, "
+             f"\nheisenberg={feat_cfg.get('include_heisenberg', True)}, "
+             f"\npair_products={feat_cfg.get('include_pair_products', False)}")
 
     # --- Step 3: Drop near-constant features (std ≈ 0) before scaling ---------
     # StandardScaler divides by std, so near-zero-variance features (common for

@@ -30,11 +30,10 @@ Config structure (passed as bandit_config for API consistency):
             },
         },
         "features": {
-            "include_raw_occ": True,
-            "include_hubbard": True,
+            "include_crystal_field": True,
+            "include_hubbard_per_atom": True,
             "include_hund_per_atom": True,
             "include_heisenberg": True,
-            "include_trace_per_spin": False,
             "include_moment_per_atom": False,
             "include_pair_products": False,
         },
@@ -132,15 +131,13 @@ def propose_forest_bandit_constraints(
     y = databank.energies
 
     reporter(f"Feature matrix: {X.shape[0]} samples × {X.shape[1]} features")
-    reporter(f"  raw_occ={feat_cfg.get('include_raw_occ', True)}, "
-             f"raw_occ_total={feat_cfg.get('include_raw_occ_total', False)}, "
-             f"raw_occ_offdiag={feat_cfg.get('include_raw_occ_offdiag', True)}, "
-             f"hubbard={feat_cfg.get('include_hubbard', True)}, "
-             f"hubbard_global={feat_cfg.get('include_hubbard_global', False)}, "
-             f"hund={feat_cfg.get('include_hund_per_atom', True)}, "
-             f"hund_global={feat_cfg.get('include_hund_global', False)}, "
-             f"heisenberg={feat_cfg.get('include_heisenberg', True)}, "
-             f"pair_products={feat_cfg.get('include_pair_products', False)}")
+    reporter(f"\ncrystal_field={feat_cfg.get('include_crystal_field', True)}, "
+             f"\nhubbard_per_atom={feat_cfg.get('include_hubbard_per_atom', True)}, "
+             f"\nhubbard_summed={feat_cfg.get('include_hubbard_summed_over_atoms', False)}, "
+             f"\nhund_per_atom={feat_cfg.get('include_hund_per_atom', True)}, "
+             f"\nhund_summed={feat_cfg.get('include_hund_summed_over_atoms', False)}, "
+             f"\nheisenberg={feat_cfg.get('include_heisenberg', True)}, "
+             f"\npair_products={feat_cfg.get('include_pair_products', False)}")
 
     # --- Step 3: Fit Random Forest --------------------------------------------
     # RF doesn't need feature scaling

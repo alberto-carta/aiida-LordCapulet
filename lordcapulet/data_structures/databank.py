@@ -1053,15 +1053,12 @@ class DataBank:
     def to_feature_matrix(self,
                           atom_ids: Optional[List[str]] = None,
                           spins: List[str] = ['up', 'down'],
-                          include_raw_occ: bool = True,
-                          include_raw_occ_total: bool = False,
-                          include_raw_occ_offdiag: bool = True,
-                          include_hubbard: bool = True,
-                          include_hubbard_global: bool = False,
-                          include_hund_per_atom: bool = True,
-                          include_hund_global: bool = False,
-                          include_heisenberg: bool = True,
-                          include_trace_per_spin: bool = False,
+                          include_crystal_field: bool = False,
+                          include_hubbard_per_atom: bool = False,
+                          include_hubbard_summed_over_atoms: bool = False,
+                          include_hund_per_atom: bool = False,
+                          include_hund_summed_over_atoms: bool = False,
+                          include_heisenberg: bool = False,
                           include_moment_per_atom: bool = False,
                           include_pair_products: bool = False,
                           ) -> Tuple[np.ndarray, List[str]]:
@@ -1072,49 +1069,45 @@ class DataBank:
         physics-informed engineered features on top of the raw occupation matrix
         elements. Designed to feed directly into sklearn models.
         
-        Feature groups (all controlled by flags):
+        Feature groups (all default to False — opt in to what you need):
         
-        - raw_occ: Upper-triangle occupation matrix elements per (atom, spin).
-          Feature names: "occ_{atom}_{spin}_{i}_{j}" with i <= j.
+        - crystal_field: Total (up+down) occupation matrix per atom, full upper
+          triangle (diagonals + off-diagonals).
+          Feature names: "cf_atom{k}_n_{i}_{j}" (atom index 1-based, i <= j).
           
-        - raw_occ_total: Total (up+down) occupation matrix per atom, upper triangle.
-          Matches the old cf_atom{k}_n_{i}_{j} format. Controlled by
-          include_raw_occ_offdiag for off-diagonals.
-          Feature names: "cf_atom{k}_n_{i}_{j}" (atom index 1-based).
-          
-        - hubbard: tr[n(1-n)] per atom (summed over spins).
+        - hubbard_per_atom: tr[n(1-n)] per atom (summed over spins).
           Feature names: "hubbard_{atom}".
           
-        - hubbard_global: Σ tr[n(1-n)] summed over all atoms — ONE global feature.
-          Feature name: "hubbard_term".  (matches old analysis)
+        - hubbard_summed_over_atoms: Σ tr[n(1-n)] summed over all atoms — ONE feature.
+          Feature name: "hubbard_summed".
           
         - hund_per_atom: M² per atom, where M = tr_up - tr_down.
           Feature names: "hund_M2_{atom}".
           
-        - hund_global: Σ M² summed over all atoms — ONE global feature.
-          Feature name: "hund_term_M2".  (matches old analysis)
+        - hund_summed_over_atoms: Σ M² summed over all atoms — ONE feature.
+          Feature name: "hund_M2_summed".
           
         - heisenberg: m_i · m_j per atom pair (i < j).
           Feature names: "heisenberg_{i}_{j}" using 1-indexed atom positions.
           
-        - trace_per_spin: tr(n) per (atom, spin).
-        - moment_per_atom: M per atom.
-        - pair_products: n_{ii}^{(a)} · n_{jj}^{(b)} across atom pairs.
+        - moment_per_atom: M = tr_up - tr_down per atom.
+          Feature names: "moment_{atom}".
+          
+        - pair_products: n_{ii}^{(a)} · n_{jj}^{(b)} for diagonal elements across
+          all atom pairs (a < b) and orbital pairs (i, j).
+          Feature names: "pairprod_a{a}_i{i}_b{b}_j{j}".
         
         Args:
             atom_ids: Atom labels to include (None = all atoms).
             spins: Spin channels to include (default: ['up', 'down']).
-            include_raw_occ: Include raw per-spin occupation matrix elements.
-            include_raw_occ_total: Include total (up+down) matrix per atom (cf_atom format).
-            include_raw_occ_offdiag: If True, include off-diagonal cf elements.
-            include_hubbard: Include Hubbard tr[n(1-n)] per atom.
-            include_hubbard_global: Include ONE global hubbard_term summed over atoms.
-            include_hund_per_atom: Include M² per atom.
-            include_hund_global: Include ONE global hund_term_M2 summed over atoms.
-            include_heisenberg: Include m_i·m_j per atom pair.
-            include_trace_per_spin: Include tr(n) per (atom, spin).
-            include_moment_per_atom: Include M per atom.
-            include_pair_products: Include diagonal products across atom pairs.
+            include_crystal_field: Total (up+down) upper-triangle matrix per atom.
+            include_hubbard_per_atom: tr[n(1-n)] per atom.
+            include_hubbard_summed_over_atoms: Global sum of tr[n(1-n)].
+            include_hund_per_atom: M² per atom.
+            include_hund_summed_over_atoms: Global sum of M².
+            include_heisenberg: m_i·m_j per atom pair.
+            include_moment_per_atom: M per atom.
+            include_pair_products: Diagonal products across atom pairs.
             
         Returns:
             Tuple of (X, feature_names) where:
@@ -1134,48 +1127,35 @@ class DataBank:
         feature_blocks = []   # list of (np.ndarray, list_of_names)
         physics_blocks = []   # list of (np.ndarray, list_of_names, kind) for physics features
         
-        # --- Block 1: Raw occupation matrix elements (per-spin) ---
-        if include_raw_occ:
-            raw_X = self.to_numpy(atom_ids=atom_ids, spins=spins)
-            raw_names = []
-            index_map = self._build_flat_index_map(atom_ids, spins)
-            for atom, spin, i, j in index_map['reverse_map']:
-                raw_names.append(f"occ_{atom}_{spin}_{i}_{j}")
-            feature_blocks.append((raw_X, raw_names))
-        
-        # --- Block 1b: Raw occupation matrix elements (total up+down, per atom) ---
-        if include_raw_occ_total:
-            total_names = []
+        # --- Block 1: Crystal field (total up+down, per atom, full upper triangle) ---
+        if include_crystal_field:
+            cf_names = []
             for a_idx, atom in enumerate(atom_ids):
                 n_orb = self.get_n_orbitals(atom)
-                atom_num = a_idx + 1  # 1-based index, robust to any label format
+                atom_num = a_idx + 1
                 for i in range(n_orb):
-                    total_names.append(f"cf_atom{atom_num}_n_{i+1}_{i+1}")
-                if include_raw_occ_offdiag:
-                    for i in range(n_orb):
-                        for j in range(i + 1, n_orb):
-                            total_names.append(f"cf_atom{atom_num}_n_{i+1}_{j+1}")
-            total_X = np.zeros((n_records, len(total_names)))
-            physics_blocks.append((total_X, total_names, 'raw_occ_total'))
+                    for j in range(i, n_orb):  # i <= j: full upper triangle
+                        cf_names.append(f"cf_atom{atom_num}_n_{i+1}_{j+1}")
+            cf_X = np.zeros((n_records, len(cf_names)))
+            physics_blocks.append((cf_X, cf_names, 'crystal_field'))
         
-        # --- Blocks 2-7: Physics features computed per-record ---
-        # Pre-allocate arrays for each physics block
+        # --- Blocks 2-8: Physics features computed per-record ---
         
-        if include_hubbard:
+        if include_hubbard_per_atom:
             hubb_names = [f"hubbard_{atom}" for atom in atom_ids]
             hubb_X = np.zeros((n_records, len(hubb_names)))
-            physics_blocks.append((hubb_X, hubb_names, 'hubbard'))
+            physics_blocks.append((hubb_X, hubb_names, 'hubbard_per_atom'))
         
-        if include_hubbard_global:
-            physics_blocks.append((np.zeros((n_records, 1)), ["hubbard_term"], 'hubbard_global'))
+        if include_hubbard_summed_over_atoms:
+            physics_blocks.append((np.zeros((n_records, 1)), ["hubbard_summed"], 'hubbard_summed'))
         
         if include_hund_per_atom:
             hund_names = [f"hund_M2_{atom}" for atom in atom_ids]
             hund_X = np.zeros((n_records, len(hund_names)))
-            physics_blocks.append((hund_X, hund_names, 'hund'))
+            physics_blocks.append((hund_X, hund_names, 'hund_per_atom'))
         
-        if include_hund_global:
-            physics_blocks.append((np.zeros((n_records, 1)), ["hund_term_M2"], 'hund_global'))
+        if include_hund_summed_over_atoms:
+            physics_blocks.append((np.zeros((n_records, 1)), ["hund_M2_summed"], 'hund_summed'))
         
         if include_heisenberg:
             n_atoms = len(atom_ids)
@@ -1185,14 +1165,6 @@ class DataBank:
                     heis_names.append(f"heisenberg_{a+1}_{b+1}")
             heis_X = np.zeros((n_records, len(heis_names)))
             physics_blocks.append((heis_X, heis_names, 'heisenberg'))
-        
-        if include_trace_per_spin:
-            trace_names = []
-            for atom in atom_ids:
-                for spin in spins:
-                    trace_names.append(f"trace_{atom}_{spin}")
-            trace_X = np.zeros((n_records, len(trace_names)))
-            physics_blocks.append((trace_X, trace_names, 'trace'))
         
         if include_moment_per_atom:
             mom_names = [f"moment_{atom}" for atom in atom_ids]
@@ -1225,7 +1197,7 @@ class DataBank:
             for block in physics_blocks:
                 arr, names, kind = block
                 
-                if kind == 'raw_occ_total':
+                if kind == 'crystal_field':
                     col = 0
                     for atom in atom_ids:
                         mat_up = occ.get_occupation_matrix_as_numpy(atom, 'up')
@@ -1233,31 +1205,27 @@ class DataBank:
                         n_total = mat_up + mat_down
                         n_orb = n_total.shape[0]
                         for i in range(n_orb):
-                            arr[rec_idx, col] = n_total[i, i]
-                            col += 1
-                        if include_raw_occ_offdiag:
-                            for i in range(n_orb):
-                                for j in range(i + 1, n_orb):
-                                    arr[rec_idx, col] = n_total[i, j]
-                                    col += 1
+                            for j in range(i, n_orb):  # full upper triangle
+                                arr[rec_idx, col] = n_total[i, j]
+                                col += 1
                 
-                elif kind == 'hubbard':
+                elif kind == 'hubbard_per_atom':
                     for col, atom in enumerate(atom_ids):
                         arr[rec_idx, col] = (occ.get_hubbard_term(atom, 'up') +
                                              occ.get_hubbard_term(atom, 'down'))
                 
-                elif kind == 'hubbard_global':
+                elif kind == 'hubbard_summed':
                     total = 0.0
                     for atom in atom_ids:
                         total += occ.get_hubbard_term(atom, 'up') + occ.get_hubbard_term(atom, 'down')
                     arr[rec_idx, 0] = total
                 
-                elif kind == 'hund':
+                elif kind == 'hund_per_atom':
                     for col, atom in enumerate(atom_ids):
                         m = occ.get_magnetic_moment(atom)
                         arr[rec_idx, col] = m * m
                 
-                elif kind == 'hund_global':
+                elif kind == 'hund_summed':
                     total = 0.0
                     for atom in atom_ids:
                         m = occ.get_magnetic_moment(atom)
@@ -1270,13 +1238,6 @@ class DataBank:
                     for a in range(len(atom_ids)):
                         for b in range(a + 1, len(atom_ids)):
                             arr[rec_idx, col] = moments[a] * moments[b]
-                            col += 1
-                
-                elif kind == 'trace':
-                    col = 0
-                    for atom in atom_ids:
-                        for spin in spins:
-                            arr[rec_idx, col] = occ.get_trace(atom, spin)
                             col += 1
                 
                 elif kind == 'moment':
@@ -1302,6 +1263,12 @@ class DataBank:
         # Assemble final feature matrix
         for arr, names, _kind in physics_blocks:
             feature_blocks.append((arr, names))
+        
+        if len(feature_blocks) == 0:
+            raise ValueError(
+                "No feature groups enabled — all include_* flags are False. "
+                "Enable at least one feature group (e.g. include_crystal_field=True)."
+            )
         
         # Concatenate all blocks
         X_list = []
