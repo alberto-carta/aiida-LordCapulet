@@ -46,16 +46,28 @@ def create_gp_model(train_X, train_Y, databank, atom_ids, mean_config, kernel_co
         #initialize constant mean to average of trainY
         # constant_mean = torch.mean(train_Y).item()
         constant_mean = torch.min(train_Y).item()
-        
+
+        # Accept both flat keys ("U_prior_mean"/"U_prior_std") and the nested
+        # form used in the YAML/notebook configs ("U_prior": {"mean": ..., "std": ...}).
+        def _prior_stats(name, default_mean, default_std):
+            nested = mean_config.get(f"{name}_prior") or {}
+            return (
+                mean_config.get(f"{name}_prior_mean", nested.get("mean", default_mean)),
+                mean_config.get(f"{name}_prior_std", nested.get("std", default_std)),
+            )
+
+        J_prior_mean, J_prior_std = _prior_stats("J", 0.5, 0.2)
+        U_prior_mean, U_prior_std = _prior_stats("U", 4.5, 1.0)
+
         mean_module = VectorizedPhysicsMean(
             databank=databank,
             atom_ids=atom_ids,
-            J_prior_mean=mean_config.get("J_prior_mean", 0.5),
-            J_prior_std=mean_config.get("J_prior_std", 0.2),
+            J_prior_mean=J_prior_mean,
+            J_prior_std=J_prior_std,
             # J_lin_prior_mean=mean_config.get("J_lin_prior_mean", 0.1),
             # J_lin_prior_std=mean_config.get("J_lin_prior_std", 0.05),
-            U_prior_mean=mean_config.get("U_prior_mean", 4.5),
-            U_prior_std=mean_config.get("U_prior_std", 1.0),
+            U_prior_mean=U_prior_mean,
+            U_prior_std=U_prior_std,
             constant_mean=constant_mean
         )
     

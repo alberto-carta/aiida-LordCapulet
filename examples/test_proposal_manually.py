@@ -188,7 +188,7 @@ proposals_lb = lb.propose_linear_bandit_constraints(
     natoms=2,
     debug=True,
     energies=energies[:],
-    gp_config=LINEAR_BANDIT_CONFIG,
+    bandit_config=LINEAR_BANDIT_CONFIG,
     reporter=print,
 )
 

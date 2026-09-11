@@ -10,14 +10,8 @@ Provides:
 Config structure (passed as bandit_config for API consistency):
     {
         "method": "ridge",          # "ridge" or "ard"
-        "model_kwargs": {           # passed to BayesianRidge / ARDRegression
-            "n_iter": 300,
-            "tol": 1e-6,
-            "alpha_1": 1e-6,
-            "alpha_2": 1e-6,
-            "lambda_1": 1e-6,
-            "lambda_2": 1e-6,
-            "fit_intercept": True,
+        "model_kwargs": {           # optional; forwarded to BayesianRidge / ARDRegression
+            "tol": 1e-6,            # everything else keeps the sklearn defaults
         },
         "acquisition": {
             "beta": 0.5,            # exploration parameter
@@ -69,6 +63,17 @@ from lordcapulet.functions.proposal_modes.shared_functionality import create_pat
 from lordcapulet.functions.proposal_modes.Bandits_shared import boltzmann_sample, lcb_acquisition
 
 
+#: Feature groups used when the config has no "features" section.
+#: ``DataBank.to_feature_matrix`` enables nothing by default, which would make
+#: the bandit unusable with an empty/minimal config, so fall back to these.
+DEFAULT_FEATURE_FLAGS = {
+    "include_crystal_field": True,
+    "include_hubbard_per_atom": True,
+    "include_hund_per_atom": True,
+    "include_heisenberg": True,
+}
+
+
 def propose_linear_bandit_constraints(
     occ_matr_list: List[OccupationMatrixData],
     energies: List[float],
@@ -112,10 +117,17 @@ def propose_linear_bandit_constraints(
     if method not in ("ridge", "ard"):
         raise ValueError(f"Unknown method '{method}'. Use 'ridge' or 'ard'.")
 
-    model_kwargs = bandit_config.get("model_kwargs", {})
+    model_kwargs = dict(bandit_config.get("model_kwargs", {}))
+
+    # `n_iter` was renamed to `max_iter` in scikit-learn 1.4 and removed in 1.7;
+    # translate legacy configs instead of failing on an unexpected keyword.
+    if "n_iter" in model_kwargs and "max_iter" not in model_kwargs:
+        model_kwargs["max_iter"] = model_kwargs.pop("n_iter")
+
     acq_cfg = bandit_config.get("acquisition", {})
     opt_cfg = bandit_config.get("optimization", {})
-    feat_cfg = bandit_config.get("features", {})
+    # Merge over the defaults so an omitted/empty "features" section still works.
+    feat_cfg = {**DEFAULT_FEATURE_FLAGS, **(bandit_config.get("features") or {})}
 
     beta = acq_cfg.get("beta", 0.5)
     eta = acq_cfg.get("eta", 30.0)

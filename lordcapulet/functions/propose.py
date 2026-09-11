@@ -14,6 +14,53 @@ from .proposal_modes import propose_linear_bandit_constraints, propose_forest_ba
 from lordcapulet.data_structures import OccupationMatrixData, extract_occupations_from_calc, filter_atoms_by_species
 
 
+#: Accepted keys for the proposal configuration. `proposal_config` is the
+#: canonical key; the others are legacy per-mode aliases kept for backwards
+#: compatibility (`linear_bandit_config`/`rf_config` used to be silently
+#: dropped by the dispatcher).
+_PROPOSAL_CONFIG_KEYS = (
+    'proposal_config',
+    'gp_config',
+    'bandit_config',
+    'linear_bandit_config',
+    'rf_config',
+    'forest_bandit_config',
+)
+
+
+def _pop_proposal_config(kwargs, debug=False, reporter=None):
+    """
+    Pop the (single) proposal configuration dict from ``kwargs``.
+
+    Accepts the canonical ``proposal_config`` key plus the legacy per-mode
+    aliases listed in ``_PROPOSAL_CONFIG_KEYS``. Exactly one may be supplied.
+
+    :param kwargs: Keyword arguments destined for the mode-specific proposer.
+    :param debug: If True, report which legacy key was used.
+    :param reporter: Optional callable for logging.
+    :return: The configuration dict, or None if none was supplied.
+    :raises ValueError: If more than one configuration key is present.
+    """
+    found = {key: kwargs.pop(key) for key in _PROPOSAL_CONFIG_KEYS if key in kwargs}
+
+    if not found:
+        return None
+
+    if len(found) > 1:
+        raise ValueError(
+            f"Multiple proposal configurations supplied ({sorted(found)}); "
+            "pass a single 'proposal_config'."
+        )
+
+    key, config = next(iter(found.items()))
+    if key != 'proposal_config' and debug and reporter is not None:
+        reporter(
+            f"Warning: proposal config passed as '{key}'; prefer the canonical "
+            "'proposal_config' key."
+        )
+    return config
+
+
 # This calcfunction must be reworked to accept also a list of calculations pks
 # in addition to the occupation_matrix_pk list
 
@@ -228,7 +275,7 @@ def propose_new_constraints(occ_matr_list, N, mode='random', debug=True, reporte
             if energies is None:
                 raise ValueError("Energies must be provided for Gaussian Process proposal mode")
             
-            gp_config = kwargs.pop('gp_config', None)
+            gp_config = _pop_proposal_config(kwargs, debug=debug, reporter=reporter)
 
             if debug:
                 reporter(f"Energies provided: {energies}")
@@ -261,7 +308,7 @@ def propose_new_constraints(occ_matr_list, N, mode='random', debug=True, reporte
             if energies is None:
                 raise ValueError("Energies must be provided for linear bandit proposal mode")
             
-            linear_bandit_config = kwargs.pop('linear_bandit_config', None)
+            bandit_config = _pop_proposal_config(kwargs, debug=debug, reporter=reporter)
 
             if debug:
                 reporter(f"Energies provided: {energies}")
@@ -277,7 +324,7 @@ def propose_new_constraints(occ_matr_list, N, mode='random', debug=True, reporte
                 reporter(f"Current generation is {current_generation}, proposing {N} constraints using linear bandit (ridge/ARD)")
                 try:
                     proposals = propose_linear_bandit_constraints(
-                        occ_matr_list, energies, natoms, N, gp_config=linear_bandit_config,
+                        occ_matr_list, energies, natoms, N, bandit_config=bandit_config,
                         debug=debug, reporter=reporter, **kwargs
                     )
                 except Exception as e:
@@ -293,7 +340,7 @@ def propose_new_constraints(occ_matr_list, N, mode='random', debug=True, reporte
             if energies is None:
                 raise ValueError("Energies must be provided for forest bandit proposal mode")
             
-            rf_config = kwargs.pop('rf_config', None)
+            bandit_config = _pop_proposal_config(kwargs, debug=debug, reporter=reporter)
 
             if debug:
                 reporter(f"Energies provided: {energies}")
@@ -309,7 +356,7 @@ def propose_new_constraints(occ_matr_list, N, mode='random', debug=True, reporte
                 reporter(f"Current generation is {current_generation}, proposing {N} constraints using forest bandit (Random Forest)")
                 try:
                     proposals = propose_forest_bandit_constraints(
-                        occ_matr_list, energies, natoms, N, gp_config=rf_config,
+                        occ_matr_list, energies, natoms, N, bandit_config=bandit_config,
                         debug=debug, reporter=reporter, **kwargs
                     )
                 except Exception as e:

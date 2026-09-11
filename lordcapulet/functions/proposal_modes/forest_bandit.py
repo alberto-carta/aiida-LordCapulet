@@ -52,6 +52,17 @@ from lordcapulet.functions.proposal_modes.shared_functionality import create_pat
 from lordcapulet.functions.proposal_modes.Bandits_shared import boltzmann_sample, lcb_acquisition
 
 
+#: Feature groups used when the config has no "features" section.
+#: ``DataBank.to_feature_matrix`` enables nothing by default, which would make
+#: the bandit unusable with an empty/minimal config, so fall back to these.
+DEFAULT_FEATURE_FLAGS = {
+    "include_crystal_field": True,
+    "include_hubbard_per_atom": True,
+    "include_hund_per_atom": True,
+    "include_heisenberg": True,
+}
+
+
 def propose_forest_bandit_constraints(
     occ_matr_list: List[OccupationMatrixData],
     energies: List[float],
@@ -94,7 +105,8 @@ def propose_forest_bandit_constraints(
     model_kwargs = bandit_config.get("model_kwargs", {})
     acq_cfg = bandit_config.get("acquisition", {})
     opt_cfg = bandit_config.get("optimization", {})
-    feat_cfg = bandit_config.get("features", {})
+    # Merge over the defaults so an omitted/empty "features" section still works.
+    feat_cfg = {**DEFAULT_FEATURE_FLAGS, **(bandit_config.get("features") or {})}
 
     beta = acq_cfg.get("beta", 0.5)
     eta = acq_cfg.get("eta", 30.0)

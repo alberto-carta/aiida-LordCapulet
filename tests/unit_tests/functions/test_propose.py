@@ -128,3 +128,144 @@ class TestProposeNewConstraints:
         input_species = occ_list[0].get_atom_species()
         for p in proposals:
             assert p.get_atom_species() == input_species
+
+class TestProposalConfigResolution:
+    """Unit tests for the proposal-config key normalization."""
+
+    def test_none_when_absent(self):
+        """No config key -> None, and kwargs are left untouched."""
+        from lordcapulet.functions.propose import _pop_proposal_config
+
+        kwargs = {'energies': [1.0, 2.0]}
+        assert _pop_proposal_config(kwargs) is None
+        assert kwargs == {'energies': [1.0, 2.0]}
+
+    @pytest.mark.parametrize('key', [
+        'proposal_config',
+        'gp_config',
+        'bandit_config',
+        'linear_bandit_config',
+        'rf_config',
+        'forest_bandit_config',
+    ])
+    def test_each_accepted_key_is_popped(self, key):
+        """Every accepted key is removed from kwargs and returned."""
+        from lordcapulet.functions.propose import _pop_proposal_config
+
+        config = {'beta': 0.5}
+        kwargs = {key: config, 'energies': [1.0, 2.0]}
+
+        assert _pop_proposal_config(kwargs) == config
+        assert kwargs == {'energies': [1.0, 2.0]}
+
+    def test_multiple_keys_raise(self):
+        """Supplying two config keys is ambiguous and should raise."""
+        from lordcapulet.functions.propose import _pop_proposal_config
+
+        with pytest.raises(ValueError, match='Multiple proposal configurations'):
+            _pop_proposal_config({'proposal_config': {}, 'bandit_config': {}})
+
+
+class TestBanditConfigPlumbing:
+    """The proposal config must actually reach the bandit proposers.
+
+    Regression test: the dispatcher used to pop ``linear_bandit_config`` /
+    ``rf_config`` and forward them as ``gp_config``, so the bandit config was
+    silently dropped and the bandit fell back to random proposals.
+    """
+
+    @staticmethod
+    def _small_config():
+        """Minimal bandit config (no 'features' section, small ensemble)."""
+        return {
+            'model_kwargs': {'tol': 1e-6},
+            'acquisition': {'beta': 0.5, 'eta': 10},
+            'optimization': {
+                'ensamble_size': 200,
+                'patchwork_params': {'apply_rotation': False},
+            },
+        }
+
+    @pytest.mark.parametrize('key', ['proposal_config', 'bandit_config', 'linear_bandit_config'])
+    def test_linear_bandit_config_reaches_proposer(self, key):
+        """Each accepted key should run the bandit (not silently fall back)."""
+        pytest.importorskip('sklearn')
+
+        from lordcapulet.functions.propose import propose_new_constraints
+
+        occ_list = _make_sample_occ_list(n_matrices=8)
+        energies = [-10.0 + 0.1 * i for i in range(len(occ_list))]
+        messages = []
+
+        proposals = propose_new_constraints(
+            occ_list,
+            N=2,
+            mode='linear_bandit',
+            debug=False,
+            reporter=messages.append,
+            energies=energies,
+            current_generation=1,
+            **{key: self._small_config()},
+        )
+
+        assert len(proposals) == 2
+        assert not any('Error in linear bandit' in msg for msg in messages), (
+            f"config passed as '{key}' never reached the bandit: {messages}"
+        )
+
+    def test_legacy_n_iter_kwarg_is_translated(self):
+        """A stale 'n_iter' model kwarg is translated to 'max_iter' (sklearn >= 1.4)."""
+        pytest.importorskip('sklearn')
+
+        from lordcapulet.functions.proposal_modes.linear_bandit import (
+            propose_linear_bandit_constraints,
+        )
+
+        occ_list = _make_sample_occ_list(n_matrices=8)
+        energies = [-10.0 + 0.1 * i for i in range(len(occ_list))]
+
+        proposals = propose_linear_bandit_constraints(
+            occ_list,
+            energies,
+            natoms=2,
+            N=2,
+            bandit_config={
+                'model_kwargs': {'n_iter': 300, 'tol': 1e-6},
+                'acquisition': {'beta': 0.5, 'eta': 10},
+                'optimization': {'ensamble_size': 200,
+                                 'patchwork_params': {'apply_rotation': False}},
+            },
+            reporter=lambda msg: None,
+        )
+
+        assert len(proposals) == 2
+
+
+class TestBanditDefaultFeatures:
+    """Bandits must work when the config omits the 'features' section."""
+
+    def test_linear_bandit_runs_without_features_section(self):
+        pytest.importorskip('sklearn')
+
+        from lordcapulet.functions.proposal_modes.linear_bandit import (
+            propose_linear_bandit_constraints,
+        )
+
+        occ_list = _make_sample_occ_list(n_matrices=8)
+        energies = [-10.0 + 0.1 * i for i in range(len(occ_list))]
+
+        proposals = propose_linear_bandit_constraints(
+            occ_list,
+            energies,
+            natoms=2,
+            N=2,
+            bandit_config={
+                'acquisition': {'beta': 0.5, 'eta': 10},
+                'optimization': {'ensamble_size': 200,
+                                 'patchwork_params': {'apply_rotation': False}},
+            },
+            reporter=lambda msg: None,
+        )
+
+        assert len(proposals) == 2
+        assert proposals[0].get_atom_labels() == occ_list[0].get_atom_labels()
